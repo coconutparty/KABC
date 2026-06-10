@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "dev": "npm.cmd --prefix frontend run dev",
+    "build": "npm.cmd --prefix frontend run build",
+    "backend:migrate": "python backend/manage.py migrate",
+    "backend:seed": "python backend/manage.py seed_demo",
+    "backend:dev": "python backend/manage.py runserver 127.0.0.1:8000"
+  }
+}
