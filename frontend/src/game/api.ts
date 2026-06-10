@@ -1,4 +1,4 @@
-import type { AppState, Player, SeasonRule, Team } from "../types/game";
+import type { AppState, BattingStrategyDefinition, PitchDefinition, Player, SeasonRule, Team } from "../types/game";
 
 export interface DemoAccount {
   username: string;
@@ -10,6 +10,8 @@ interface ApiState {
   teams: Team[];
   players: Player[];
   seasonRule: SeasonRule | null;
+  pitchTable: Record<string, PitchDefinition>;
+  battingStrategyTable: Record<string, BattingStrategyDefinition>;
 }
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
@@ -19,8 +21,8 @@ function authHeaders(account: DemoAccount) {
   return { Authorization: `Bearer ${account.token}` };
 }
 
-export async function fetchInitialData(): Promise<ApiState> {
-  const response = await fetch(apiUrl("/api/state/"));
+export async function fetchInitialData(account: DemoAccount): Promise<ApiState> {
+  const response = await fetch(apiUrl("/api/state/"), { headers: authHeaders(account) });
   if (!response.ok) throw new Error("초기 데이터를 불러오지 못했습니다.");
   return response.json();
 }

@@ -179,7 +179,7 @@ function kimPrefix(kimInvolved: boolean) {
 
 function battingStrategyIds(player: Player) {
   const ids = player.battingStrategies?.length ? player.battingStrategies : [...DEFAULT_BATTING_STRATEGIES];
-  return ids.filter((id) => BAT_STRATEGY_TABLE[id]);
+  return ids;
 }
 
 function battingStrategyWeight(player: Player, id: string) {
@@ -191,11 +191,12 @@ function battingStrategyWeight(player: Player, id: string) {
   return 1 + bat.contact / 35;
 }
 
-function pickBattingStrategy(rng: () => number, player: Player, requestedId?: string) {
-  if (requestedId && BAT_STRATEGY_TABLE[requestedId]) return BAT_STRATEGY_TABLE[requestedId];
-  const ids = battingStrategyIds(player);
+function pickBattingStrategy(rng: () => number, player: Player, strategyTable: typeof BAT_STRATEGY_TABLE, requestedId?: string) {
+  if (requestedId && strategyTable[requestedId]) return strategyTable[requestedId];
+  const ids = battingStrategyIds(player).filter((id) => strategyTable[id]);
+  if (!ids.length) return strategyTable.contact ?? BAT_STRATEGY_TABLE.contact;
   const picked = weightedPick(rng, ids.map((id) => [id, battingStrategyWeight(player, id)]));
-  return BAT_STRATEGY_TABLE[picked] ?? BAT_STRATEGY_TABLE.contact;
+  return strategyTable[picked] ?? strategyTable.contact ?? BAT_STRATEGY_TABLE.contact;
 }
 
 function conditionRoll(rng: () => number, base: number, spread = 7) {
@@ -232,12 +233,14 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
   maybeEmotion(rng, fieldingTeam, pitcher, match.inning, match, broadcast);
   const batterEffect = match.inningEffects[batter.id];
   const pitcherEffect = match.inningEffects[pitcher.id];
+  const pitchTable = state.pitchTable && Object.keys(state.pitchTable).length ? state.pitchTable : PITCH_TABLE;
+  const battingStrategyTable = state.battingStrategyTable && Object.keys(state.battingStrategyTable).length ? state.battingStrategyTable : BAT_STRATEGY_TABLE;
   const chosenPitch = kimPitch || weightedPick(rng, (pitcher.pitches.length ? pitcher.pitches : ["직구"]).map((pitch) => [pitch, 1]));
-  const pitch = PITCH_TABLE[chosenPitch] ?? PITCH_TABLE["직구"];
+  const pitch = pitchTable[chosenPitch] ?? pitchTable["직구"] ?? PITCH_TABLE["직구"];
   const speedValue = effectiveStat(pitcher, pitcher.fieldingStats.velocity, pitcherEffect) * (pitch.speed[0] + rng() * (pitch.speed[1] - pitch.speed[0]));
   const pitchSpeedKmh = Math.round(speedValue);
   const recordPlay = (payload: LastPlayInput) => setLastPlay(match, { ...payload, speedKmh: pitchSpeedKmh });
-  const batChoice = pickBattingStrategy(rng, batter, kimBatChoice);
+  const batChoice = pickBattingStrategy(rng, batter, battingStrategyTable, kimBatChoice);
   const controlScore = effectiveStat(pitcher, pitcher.fieldingStats.control, pitcherEffect) + effectiveStat(pitcher, pitcher.fieldingStats.awareness, pitcherEffect) * 0.2 + pitch.controlMod;
   const control = controlResult(controlScore, rng);
   const discipline = effectiveStat(batter, batter.battingStats.discipline, batterEffect) * batChoice.discipline + (pitch.disciplineMod ?? 0);

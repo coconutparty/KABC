@@ -13,6 +13,7 @@ const KIM_NAME = "김철민";
 const KIM_JOB = "청마루 감자탕 후계자";
 const PLAYER_TEAM_NAME = "복사골 피치브라더스";
 const ACCOUNT_KEY = "kabc-demo-account";
+const DATA_OWNERSHIP_VERSION = 2;
 const KIM_ROLES: KimRole[] = ["지명타자", "야수", "루수", "포수", "선발투수", "구원투수", "마무리투수", "투타 겸업", "벤치", "결장"];
 type BattingStrategyChoice = (typeof BAT_STRATEGY_TABLE)[string];
 
@@ -34,6 +35,14 @@ function normalizeTeams(teams: Team[]) {
   return teams.map((team) => team.isPlayer ? { ...team, name: PLAYER_TEAM_NAME } : team);
 }
 
+function activeBattingStrategyTable(state?: Pick<AppState, "battingStrategyTable">) {
+  return state?.battingStrategyTable && Object.keys(state.battingStrategyTable).length ? state.battingStrategyTable : BAT_STRATEGY_TABLE;
+}
+
+function activePitchTable(state?: Pick<AppState, "pitchTable">) {
+  return state?.pitchTable && Object.keys(state.pitchTable).length ? state.pitchTable : PITCH_TABLE;
+}
+
 function normalizePlayerData(players: Player[]) {
   return players.map((player) => ({
     ...player,
@@ -42,15 +51,18 @@ function normalizePlayerData(players: Player[]) {
   }));
 }
 
-function normalizeLoadedState(state: AppState): AppState {
+function normalizeLoadedState(state: AppState, data: Awaited<ReturnType<typeof fetchInitialData>>): AppState {
   const phase = state.dayIndex % 7 === 2 && (state.financeEvents?.length ?? 0) > 0 && state.phase === "dashboard" ? "teamManagement" : state.phase;
   const match = state.match && !state.match.count ? { ...state.match, count: { balls: 0, strikes: 0 } } : state.match;
   return {
     ...state,
+    dataOwnershipVersion: DATA_OWNERSHIP_VERSION,
     phase,
     match,
     teams: normalizeTeams(state.teams),
     players: normalizePlayerData(state.players),
+    pitchTable: data.pitchTable ?? state.pitchTable ?? PITCH_TABLE,
+    battingStrategyTable: data.battingStrategyTable ?? state.battingStrategyTable ?? BAT_STRATEGY_TABLE,
     dailyAbsences: (state.dailyAbsences ?? []).filter((absence) => absence.dayIndex === state.dayIndex),
     nightAction: state.nightAction ?? "none",
     nightTrainingCount: state.nightTrainingCount ?? 0,
@@ -67,12 +79,15 @@ function makeInitialState(data: Awaited<ReturnType<typeof fetchInitialData>>): A
   const entry = [...roster].sort((a, b) => playerOvr(b) - playerOvr(a)).slice(0, 9).map((player) => player.id);
   return {
     phase: "dashboard",
+    dataOwnershipVersion: DATA_OWNERSHIP_VERSION,
     seed: 20260610,
     dayIndex: 0,
     gamesPlayed: 0,
     teams: normalizeTeams(data.teams),
     players,
     seasonRule: data.seasonRule ?? DEFAULT_RULE,
+    pitchTable: data.pitchTable ?? PITCH_TABLE,
+    battingStrategyTable: data.battingStrategyTable ?? BAT_STRATEGY_TABLE,
     kimRole: "투타 겸업",
     selectedEntry: kim ? [kim.id, ...entry.filter((id) => id !== kim.id)].slice(0, 9) : entry,
     selectedPitcherId: kim?.id,
@@ -92,7 +107,7 @@ function makeInitialState(data: Awaited<ReturnType<typeof fetchInitialData>>): A
 }
 
 function App() {
-  const [state, setState] = useState<AppState>({ phase: "loading", seed: 0, dayIndex: 0, gamesPlayed: 0, teams: [], players: [], seasonRule: DEFAULT_RULE, kimRole: "투타 겸업", selectedEntry: [], selectedDh: false, activityLog: [], financeEvents: [], dailyAbsences: [], eveningHours: 6, restBonus: 0, nightAction: "none", nightTrainingCount: 0, nightConditionPenalty: 0, nightConditionSettled: false, dayClicks: 0 });
+  const [state, setState] = useState<AppState>({ phase: "loading", dataOwnershipVersion: DATA_OWNERSHIP_VERSION, seed: 0, dayIndex: 0, gamesPlayed: 0, teams: [], players: [], seasonRule: DEFAULT_RULE, pitchTable: PITCH_TABLE, battingStrategyTable: BAT_STRATEGY_TABLE, kimRole: "투타 겸업", selectedEntry: [], selectedDh: false, activityLog: [], financeEvents: [], dailyAbsences: [], eveningHours: 6, restBonus: 0, nightAction: "none", nightTrainingCount: 0, nightConditionPenalty: 0, nightConditionSettled: false, dayClicks: 0 });
   const [account, setAccount] = useState<DemoAccount | null>(() => loadSavedAccount());
   const playerTeam = state.teams.find((team) => team.isPlayer);
   const kim = state.players.find((player) => player.name === KIM_NAME);
@@ -101,10 +116,10 @@ function App() {
     const activeAccount = account;
     if (!activeAccount) return;
     async function load(loadAccount: DemoAccount) {
-      const data = await fetchInitialData();
+      const data = await fetchInitialData(loadAccount);
       const snapshot = await fetchSnapshot(loadAccount);
-      const snapshotValid = snapshot?.players?.some((player) => player.name === KIM_NAME);
-      setState(snapshotValid && snapshot ? normalizeLoadedState(snapshot) : makeInitialState(data));
+      const snapshotValid = snapshot?.dataOwnershipVersion === DATA_OWNERSHIP_VERSION && snapshot?.players?.some((player) => player.name === KIM_NAME);
+      setState(snapshotValid && snapshot ? normalizeLoadedState(snapshot, data) : makeInitialState(data));
     }
     load(activeAccount).catch((error) => setState((current) => ({ ...current, phase: "gameOver", gameOverReason: error.message })));
   }, [account]);
@@ -185,7 +200,7 @@ function App() {
   function logout() {
     saveAccount(null);
     setAccount(null);
-    setState({ phase: "loading", seed: 0, dayIndex: 0, gamesPlayed: 0, teams: [], players: [], seasonRule: DEFAULT_RULE, kimRole: "투타 겸업", selectedEntry: [], selectedDh: false, activityLog: [], financeEvents: [], dailyAbsences: [], eveningHours: 6, restBonus: 0, nightAction: "none", nightTrainingCount: 0, nightConditionPenalty: 0, nightConditionSettled: false, dayClicks: 0 });
+    setState({ phase: "loading", dataOwnershipVersion: DATA_OWNERSHIP_VERSION, seed: 0, dayIndex: 0, gamesPlayed: 0, teams: [], players: [], seasonRule: DEFAULT_RULE, pitchTable: PITCH_TABLE, battingStrategyTable: BAT_STRATEGY_TABLE, kimRole: "투타 겸업", selectedEntry: [], selectedDh: false, activityLog: [], financeEvents: [], dailyAbsences: [], eveningHours: 6, restBonus: 0, nightAction: "none", nightTrainingCount: 0, nightConditionPenalty: 0, nightConditionSettled: false, dayClicks: 0 });
   }
 
   if (!account) return <IndexScreen onEnter={enterAccount} />;
@@ -998,8 +1013,10 @@ function GameView({ state, setState }: { state: AppState; setState: (fn: (s: App
   const away = state.teams.find((team) => team.id === match.awayTeamId)!;
   const waitingPitcher = state.players.find((player) => player.id === match.waitingPitcherId);
   const waitingBatter = state.players.find((player) => player.id === match.waitingBatterId);
+  const pitchTable = activePitchTable(state);
+  const battingStrategyTable = activeBattingStrategyTable(state);
   const waitingBatChoices = (waitingBatter?.battingStrategies?.length ? waitingBatter.battingStrategies : [...DEFAULT_BATTING_STRATEGIES])
-    .map((id) => BAT_STRATEGY_TABLE[id])
+    .map((id) => battingStrategyTable[id])
     .filter(Boolean);
   const [isRunning, setIsRunning] = useState(true);
   const [speed, setSpeed] = useState<0.5 | 1 | 2 | 4>(1);
@@ -1095,7 +1112,7 @@ function GameView({ state, setState }: { state: AppState; setState: (fn: (s: App
               <h3>{match.waitingFor === "kimBat" ? "김철민 타석" : "김철민 투구"}</h3>
               <p>{match.waitingFor === "kimBat" ? `${waitingBatter?.name}이 타석에 들어섰습니다. 어떤 접근을 할까요?` : `${waitingPitcher?.name}이 마운드에서 사인을 봅니다. 구종을 선택하세요.`}</p>
               {match.waitingFor === "kimBat" && <div className="choiceGrid kimChoiceGrid">{waitingBatChoices.map((choice, index) => <KimBatChoiceCard key={choice.id} choice={choice} index={index} onSelect={() => runStep(choice.id)} />)}</div>}
-              {match.waitingFor === "kimPitch" && waitingPitcher && <div className="choiceGrid kimChoiceGrid">{waitingPitcher.pitches.map((pitch, index) => <KimPitchChoiceCard key={pitch} pitcher={waitingPitcher} pitch={pitch} index={index} onSelect={() => runStep(undefined, pitch)} />)}</div>}
+              {match.waitingFor === "kimPitch" && waitingPitcher && <div className="choiceGrid kimChoiceGrid">{waitingPitcher.pitches.map((pitch, index) => <KimPitchChoiceCard key={pitch} pitcher={waitingPitcher} pitch={pitch} pitchTable={pitchTable} index={index} onSelect={() => runStep(undefined, pitch)} />)}</div>}
             </div> : <div className="duelEmpty">자동 진행 중</div>}
           </div>
           <div className="duelSide batterSide">{state.players.find((player) => player.id === currentBatterId) && <LiveDuelCard player={state.players.find((player) => player.id === currentBatterId)!} label={`${currentOrder + 1}번 타자`} mode="batter" effect={match.inningEffects[currentBatterId]} />}</div>
@@ -1147,8 +1164,8 @@ function GameControls({ isRunning, speed, onToggle, onSpeed, onStep, disabled }:
   );
 }
 
-function pitchSpeedRange(pitcher: Player, pitchName: string) {
-  const pitch = PITCH_TABLE[pitchName];
+function pitchSpeedRange(pitcher: Player, pitchName: string, pitchTable = PITCH_TABLE) {
+  const pitch = pitchTable[pitchName];
   if (!pitch) return "구속 정보 없음";
   const velocity = effectiveStat(pitcher, pitcher.fieldingStats.velocity);
   return `${Math.round(velocity * pitch.speed[0])}-${Math.round(velocity * pitch.speed[1])}km/h`;
@@ -1165,8 +1182,8 @@ function KimBatChoiceCard({ choice, index, onSelect }: { choice: BattingStrategy
   );
 }
 
-function KimPitchChoiceCard({ pitcher, pitch, index, onSelect }: { pitcher: Player; pitch: string; index: number; onSelect: () => void }) {
-  const pitchInfo = PITCH_TABLE[pitch];
+function KimPitchChoiceCard({ pitch, pitchTable, index, onSelect }: { pitcher: Player; pitch: string; pitchTable: typeof PITCH_TABLE; index: number; onSelect: () => void }) {
+  const pitchInfo = pitchTable[pitch];
   return (
     <button className="kimChoiceCard pitchChoice" style={{ animationDelay: `${index * 70}ms` }} onClick={onSelect}>
       <span className="choiceNo">{String(index + 1).padStart(2, "0")}</span>

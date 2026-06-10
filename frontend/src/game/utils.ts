@@ -139,9 +139,8 @@ export function tradeValue(player: Player) {
 }
 
 export function effectiveStat(player: Player, stat: number, effect?: { type: "투지" | "태업"; until: number }) {
-  const staminaFactor = player.stamina < 30 ? 0.85 : player.stamina < 50 ? 0.93 : 1;
-  const conditionFactor = player.condition < 35 ? 0.88 : player.condition < 55 ? 0.95 : player.condition > 80 ? 1.05 : 1;
-  const emotionFactor = effect?.type === "투지" ? 1.05 : effect?.type === "태업" ? 0.9 : 1;
+  const conditionFactor = player.condition >= 50 ? 1 : 0.5 + player.condition * 0.01;
+  const emotionFactor = effect?.type === "투지" ? 1.1 : effect?.type === "태업" ? 0.9 : 1;
   const ignorePenalty = effect?.type === "투지";
-  return stat * emotionFactor * (ignorePenalty ? 1 : staminaFactor * conditionFactor);
+  return stat * emotionFactor * (ignorePenalty ? 1 : conditionFactor);
 }

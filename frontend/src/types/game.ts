@@ -2,8 +2,33 @@ export type Position = "투수" | "포수" | "내야수" | "외야수" | "유틸
 export type Phase = "loading" | "dashboard" | "miniGame" | "evening" | "teamManagement" | "roster" | "preGame" | "game" | "postGame" | "gameOver" | "seasonEnd";
 export type KimRole = "지명타자" | "야수" | "루수" | "포수" | "선발투수" | "구원투수" | "마무리투수" | "투타 겸업" | "벤치" | "결장";
 
+export interface PitchDefinition {
+  speed: [number, number];
+  contactMod: number;
+  disciplineMod?: number;
+  controlMod: number;
+  stamina: number;
+  distanceMod?: number;
+  grounder?: number;
+  groundDistanceMod?: number;
+  description: string;
+}
+
+export interface BattingStrategyDefinition {
+  id: string;
+  label: string;
+  stamina: number;
+  contact: number;
+  power: number;
+  discipline: number;
+  speed: number;
+  distance: number;
+  description: string;
+}
+
 export interface Team {
   id: number;
+  accountId?: number | null;
   name: string;
   isPlayer: boolean;
   funds: number;
@@ -19,6 +44,7 @@ export interface Team {
 
 export interface Player {
   id: number;
+  accountId?: number | null;
   teamId: number;
   number: number;
   name: string;
@@ -138,12 +164,15 @@ export interface DailyAbsence {
 
 export interface AppState {
   phase: Phase;
+  dataOwnershipVersion?: number;
   seed: number;
   dayIndex: number;
   gamesPlayed: number;
   teams: Team[];
   players: Player[];
   seasonRule: SeasonRule;
+  pitchTable?: Record<string, PitchDefinition>;
+  battingStrategyTable?: Record<string, BattingStrategyDefinition>;
   kimRole: KimRole;
   selectedEntry: number[];
   selectedPitcherId?: number;

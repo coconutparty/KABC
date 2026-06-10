@@ -1,16 +1,8 @@
+import type { BattingStrategyDefinition, PitchDefinition } from "../types/game";
+
 export const DAYS = ["월", "화", "수", "목", "금", "토", "일"] as const;
 
-export const PITCH_TABLE: Record<string, {
-  speed: [number, number];
-  contactMod: number;
-  disciplineMod?: number;
-  controlMod: number;
-  stamina: number;
-  distanceMod?: number;
-  grounder?: number;
-  groundDistanceMod?: number;
-  description: string;
-}> = {
+export const PITCH_TABLE: Record<string, PitchDefinition> = {
   직구: { speed: [1.6, 1.65], contactMod: 5, controlMod: 5, stamina: 1, distanceMod: 1.1, description: "구속 160~165%, 상대 컨택 +5%, 체력 -1" },
   싱커: { speed: [1.55, 1.6], contactMod: 0, controlMod: -2, stamina: 1.2, grounder: 30, groundDistanceMod: 0.7, description: "장타 -5%, 30% 땅볼, 체력 -1.2" },
   투심: { speed: [1.5, 1.55], contactMod: 5, controlMod: 0, stamina: 1.2, grounder: 25, groundDistanceMod: 0.75, description: "상대 컨택 +5%, 25% 땅볼, 체력 -1.2" },
@@ -39,17 +31,7 @@ export const JOB_DUES: Record<string, { dueRate: number; sponsorRate: number }> 
   "무직/백수": { dueRate: 55, sponsorRate: 0 }
 };
 
-export const BAT_STRATEGY_TABLE: Record<string, {
-  id: string;
-  label: string;
-  stamina: number;
-  contact: number;
-  power: number;
-  discipline: number;
-  speed: number;
-  distance: number;
-  description: string;
-}> = {
+export const BAT_STRATEGY_TABLE: Record<string, BattingStrategyDefinition> = {
   contact: { id: "contact", label: "컨택 위주", stamina: 1, contact: 1.1, power: 0.9, discipline: 1, speed: 1, distance: 0, description: "컨택 +10% · 장타 -10%" },
   wait: { id: "wait", label: "공을 오래 본다", stamina: 1, contact: 0.95, power: 1, discipline: 1.15, speed: 1, distance: 0, description: "컨택 -5% · 선구 +15%" },
   power: { id: "power", label: "장타를 노린다", stamina: 2, contact: 0.9, power: 1.2, discipline: 1, speed: 1, distance: 5, description: "컨택 -10% · 장타 +20% · 비거리 +5m" },

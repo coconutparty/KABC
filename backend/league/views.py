@@ -7,7 +7,8 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .models import DemoAccount, GameSnapshot, Player, SeasonRule, Team
+from .demo_data import create_demo_league, seed_skill_tables
+from .models import BattingStrategy, DemoAccount, GameRecord, GameSnapshot, PitchType, Player, SeasonRule, Team
 
 
 PLAYER_TEAM_NAME = "복사골 피치브라더스"
@@ -38,15 +39,29 @@ def snapshot_key(account):
 
 
 def ensure_player_team_name():
-    team = Team.objects.filter(is_player=True).first()
+    team = Team.objects.filter(is_player=True, account__isnull=True).first()
     if team and team.name != PLAYER_TEAM_NAME:
         team.name = PLAYER_TEAM_NAME
         team.save(update_fields=["name"])
 
 
+def ensure_global_config():
+    if SeasonRule.objects.count() == 0:
+        SeasonRule.objects.create(name="Tech Demo 0.0.1")
+    if PitchType.objects.count() == 0 or BattingStrategy.objects.count() == 0:
+        seed_skill_tables()
+
+
+def ensure_account_league(account):
+    ensure_global_config()
+    if not Team.objects.filter(account=account).exists():
+        create_demo_league(account=account)
+
+
 def serialize_team(team):
     return {
         "id": team.id,
+        "accountId": team.account_id,
         "name": team.name,
         "isPlayer": team.is_player,
         "funds": team.funds,
@@ -64,6 +79,7 @@ def serialize_team(team):
 def serialize_player(player):
     return {
         "id": player.id,
+        "accountId": player.account_id,
         "teamId": player.team_id,
         "number": player.number,
         "name": player.name,
@@ -93,16 +109,67 @@ def serialize_player(player):
     }
 
 
+def serialize_pitch_type(pitch):
+    payload = {
+        "speed": [pitch.speed_min, pitch.speed_max],
+        "contactMod": pitch.contact_mod,
+        "controlMod": pitch.control_mod,
+        "stamina": pitch.stamina,
+        "description": pitch.description,
+    }
+    if pitch.discipline_mod:
+        payload["disciplineMod"] = pitch.discipline_mod
+    if pitch.distance_mod is not None:
+        payload["distanceMod"] = pitch.distance_mod
+    if pitch.grounder is not None:
+        payload["grounder"] = pitch.grounder
+    if pitch.ground_distance_mod is not None:
+        payload["groundDistanceMod"] = pitch.ground_distance_mod
+    return payload
+
+
+def serialize_batting_strategy(strategy):
+    return {
+        "id": strategy.code,
+        "label": strategy.label,
+        "stamina": strategy.stamina,
+        "contact": strategy.contact,
+        "power": strategy.power,
+        "discipline": strategy.discipline,
+        "speed": strategy.speed,
+        "distance": strategy.distance,
+        "description": strategy.description,
+    }
+
+
+def skill_payload():
+    return {
+        "pitchTable": {
+            pitch.code: serialize_pitch_type(pitch)
+            for pitch in PitchType.objects.filter(is_active=True).order_by("id")
+        },
+        "battingStrategyTable": {
+            strategy.code: serialize_batting_strategy(strategy)
+            for strategy in BattingStrategy.objects.filter(is_active=True).order_by("id")
+        },
+    }
+
+
 @require_http_methods(["GET"])
-def state(_request):
+def state(request):
+    account = account_from_request(request)
+    if not account:
+        return JsonResponse({"error": "로그인이 필요합니다."}, status=401)
     if Team.objects.count() == 0:
         call_command("seed_demo")
-    ensure_player_team_name()
+    ensure_account_league(account)
     rule = SeasonRule.objects.first()
+    teams = Team.objects.filter(account=account).order_by("id")
+    players = Player.objects.filter(account=account).order_by("team_id", "number")
     return JsonResponse(
         {
-            "teams": [serialize_team(team) for team in Team.objects.order_by("id")],
-            "players": [serialize_player(player) for player in Player.objects.order_by("team_id", "number")],
+            "teams": [serialize_team(team) for team in teams],
+            "players": [serialize_player(player) for player in players],
             "seasonRule": {
                 "entryFee": rule.entry_fee,
                 "championReward": rule.champion_reward,
@@ -113,6 +180,7 @@ def state(_request):
             }
             if rule
             else None,
+            **skill_payload(),
         }
     )
 
@@ -159,6 +227,8 @@ def reset(request):
     if not account:
         return JsonResponse({"error": "로그인이 필요합니다."}, status=401)
     GameSnapshot.objects.filter(key=snapshot_key(account)).delete()
+    GameRecord.objects.filter(account=account).delete()
+    Team.objects.filter(account=account).delete()
     return state(request)
 
 
