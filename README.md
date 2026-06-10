@@ -1,8 +1,10 @@
-# KABC: 퇴근 후 플레이볼 — Tech Demo 0.0.1
+# KABC: 퇴근 후 플레이볼 - Tech Demo 0.0.1
 
-웹 기반 게임 로직 검증용 테크데모입니다.
+웹 기반 사회인 야구 운영/경기 로직 검증용 테크데모입니다.
 
-## 실행
+## Local Development
+
+Backend:
 
 ```powershell
 python backend/manage.py migrate
@@ -10,23 +12,48 @@ python backend/manage.py seed_demo
 python backend/manage.py runserver 127.0.0.1:8010
 ```
 
-다른 터미널:
+Frontend:
 
 ```powershell
 npm.cmd --prefix frontend install
 npm.cmd --prefix frontend run dev
 ```
 
-브라우저에서 `http://127.0.0.1:5173`을 엽니다.
+Open `http://127.0.0.1:5173`.
 
-## 구현 범위
+## Railway Deployment
 
-- Django 6 + SQLite 모델: 팀, 선수, 시즌 규칙, 경기 기록, 게임 스냅샷
-- React + TypeScript + Vite 프론트엔드
-- seed 기반 4팀/48명 선수 생성, 상대팀 선수 단위 시뮬레이션
-- 2주/8경기 일정 루프, 클릭당 20,000원/김철민 체력 -5 낮 일정, 개인 훈련/휴식, 주말 회식
-- 주간 일정 시작 시 전원 체력 100% 회복, 평일 저녁에는 직업별 낮 피로 적용, 주말 오전 경기는 전원 체력 100%
-- 수요일 회비/찬조금 정산, 팀 훈련, 선발 라인업 관리, 후보 영입/트레이드 UI
-- 7이닝 타석 단위 경기 엔진, 콜드게임, 김철민 타격/투구 개입
-- 야구장 다이아몬드 시각화, 타구 방향/비거리 표시, 중계 로그와 판정 로그 분리 출력
-- 팀 사기, 유대감, 신뢰도, 공정성, 재정 안정도 정산
+Deploy this repository as two separate Railway services.
+
+### Backend Service
+
+- Root directory: `backend`
+- Builder: Nixpacks
+- Start command is defined in `backend/railway.json`.
+- Add a PostgreSQL database service and set `DATABASE_URL`.
+
+Recommended variables:
+
+```text
+DEBUG=False
+SECRET_KEY=<strong random secret>
+ALLOWED_HOSTS=.railway.app,.up.railway.app,<backend-domain>
+CORS_ALLOWED_ORIGINS=https://<frontend-domain>
+CSRF_TRUSTED_ORIGINS=https://<frontend-domain>
+```
+
+The backend seeds demo league data automatically when `/api/state/` is first requested and no teams exist.
+
+### Frontend Service
+
+- Root directory: `frontend`
+- Builder: Nixpacks
+- Build/start commands are defined in `frontend/railway.json`.
+
+Required variable:
+
+```text
+VITE_API_BASE_URL=https://<backend-domain>
+```
+
+Do not deploy from the repository root. The root `package.json` is only a local convenience script runner.

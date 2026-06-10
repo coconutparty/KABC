@@ -1,4 +1,5 @@
 backend/db.sqlite3
+backend/staticfiles/
 backend/**/*.pyc
 backend/**/__pycache__/
 frontend/node_modules/
