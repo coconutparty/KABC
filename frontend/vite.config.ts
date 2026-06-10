@@ -7,5 +7,11 @@ export default defineConfig({
     proxy: {
       "/api": "http://127.0.0.1:8010"
     }
+  },
+  preview: {
+    allowedHosts: [
+      "frontend-production-20dd.up.railway.app",
+      ...(process.env.VITE_ALLOWED_HOSTS?.split(",").map((host) => host.trim()).filter(Boolean) ?? [])
+    ]
   }
 });
