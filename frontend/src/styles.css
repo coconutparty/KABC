@@ -1686,6 +1686,66 @@ dd {
   margin-left: 0;
 }
 
+.bullpenBox {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  color: #f7fcff;
+  border: 1px solid rgba(255,255,255,0.42);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 82% 0, rgba(255, 232, 138, 0.32), transparent 26%),
+    linear-gradient(145deg, #0a4d70, #127e75);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.1), 0 10px 18px rgba(8, 83, 102, 0.18);
+}
+
+.bullpenBox > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.bullpenBox strong {
+  color: #fff8b8;
+  font-size: 14px;
+  font-weight: 1000;
+}
+
+.bullpenBox span {
+  color: #e9fbff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.bullpenBox select {
+  width: 100%;
+  min-height: 34px;
+  min-width: 0;
+  color: #07324a;
+  border: 1px solid rgba(255,255,255,0.72);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.94);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bullpenActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.bullpenActions button {
+  min-height: 34px;
+  padding: 6px 8px;
+  color: #211407;
+  border-color: #d4a23d;
+  background: linear-gradient(180deg, #ffe798, #bd842d);
+  font-size: 12px;
+  font-weight: 1000;
+}
+
 .duelDeck {
   display: grid;
   grid-template-columns: minmax(230px, 0.82fr) minmax(360px, 1.3fr) minmax(230px, 0.82fr);

@@ -982,14 +982,49 @@ function GameView({ state, setState }: { state: AppState; setState: (fn: (s: App
   const [isRunning, setIsRunning] = useState(true);
   const [speed, setSpeed] = useState<0.5 | 1 | 2 | 4>(1);
   const [lineupOpen, setLineupOpen] = useState(false);
+  const [bullpenPitcherId, setBullpenPitcherId] = useState("");
   const delay = { 0.5: 4200, 1: 2800, 2: 1700, 4: 950 }[speed];
   const attackingTeamId = match.top ? match.awayTeamId : match.homeTeamId;
   const fieldingTeamId = match.top ? match.homeTeamId : match.awayTeamId;
+  const playerTeamId = state.teams.find((team) => team.isPlayer)?.id;
+  const playerTeamFielding = fieldingTeamId === playerTeamId;
   const currentLineup = match.lineup[attackingTeamId] ?? [];
   const currentOrder = (match.orderIndex[attackingTeamId] ?? 0) % Math.max(1, currentLineup.length);
   const currentBatterId = currentLineup[currentOrder];
   const currentPitcherId = match.pitcher[fieldingTeamId];
+  const playerPitcherId = playerTeamId ? match.pitcher[playerTeamId] : undefined;
+  const playerLineupIds = new Set(playerTeamId ? match.lineup[playerTeamId] ?? [] : []);
+  const absentIds = new Set((state.dailyAbsences ?? []).filter((absence) => absence.dayIndex === state.dayIndex).map((absence) => absence.playerId));
+  const bullpenPitchers = state.players
+    .filter((player) => player.teamId === playerTeamId && player.id !== playerPitcherId && !playerLineupIds.has(player.id) && !player.injured && !absentIds.has(player.id) && player.pitches.length > 0)
+    .sort((a, b) => playerOvr(b, "투수") - playerOvr(a, "투수"));
   const runStep = (choice?: string, pitch?: string) => setState((current) => simulateStep(current, choice, pitch));
+  const changePitcher = (role: "구원투수" | "마무리투수") => {
+    const nextPitcherId = Number(bullpenPitcherId);
+    if (!nextPitcherId || !playerTeamId || !playerTeamFielding) return;
+    setState((current) => {
+      const currentMatch = current.match;
+      if (!currentMatch || currentMatch.finished) return current;
+      const previousPitcherId = currentMatch.pitcher[playerTeamId];
+      const previousPitcher = current.players.find((player) => player.id === previousPitcherId);
+      const nextPitcher = current.players.find((player) => player.id === nextPitcherId);
+      if (!nextPitcher || nextPitcher.teamId !== playerTeamId || nextPitcher.pitches.length === 0) return current;
+      const text = `${role} 등판: ${previousPitcher?.name ?? "현재 투수"} OUT, ${nextPitcher.name} IN. 지금부터 마운드를 맡습니다.`;
+      const line = { id: `${Date.now()}-${Math.random()}`, text };
+      return {
+        ...current,
+        match: {
+          ...currentMatch,
+          pitcher: { ...currentMatch.pitcher, [playerTeamId]: nextPitcher.id },
+          waitingFor: null,
+          waitingPitcherId: undefined,
+          broadcast: [...currentMatch.broadcast, line],
+          rulings: [...currentMatch.rulings, { ...line, id: `${line.id}-ruling` }]
+        }
+      };
+    });
+    setBullpenPitcherId("");
+  };
   const queueSubstitution = (outPlayerId: number, inPlayerId: number) => setState((current) => {
     const currentMatch = current.match;
     if (!currentMatch || currentMatch.finished) return current;
@@ -1048,6 +1083,20 @@ function GameView({ state, setState }: { state: AppState; setState: (fn: (s: App
       <Panel title="중계 로그" className="broadcastPanel">
         <div className="sideControlBox">
           <GameControls isRunning={isRunning} speed={speed} onToggle={() => setIsRunning((value) => !value)} onSpeed={setSpeed} onStep={() => runStep()} disabled={!!match.waitingFor || match.finished} />
+          <div className="bullpenBox">
+            <div>
+              <strong>불펜</strong>
+              <span>{playerTeamFielding ? "수비 중 투수교체 가능" : "우리 팀 수비 때 교체 가능"}</span>
+            </div>
+            <select value={bullpenPitcherId} onChange={(event) => setBullpenPitcherId(event.target.value)} disabled={!playerTeamFielding || !!match.waitingFor || match.finished}>
+              <option value="">투수 선택</option>
+              {bullpenPitchers.map((player) => <option key={player.id} value={player.id}>#{player.number} {player.name} · 체력 {Math.round(player.stamina)}/{player.maxStamina} · OVR {playerOvr(player, "투수").toFixed(1)}</option>)}
+            </select>
+            <div className="bullpenActions">
+              <button disabled={!bullpenPitcherId || !playerTeamFielding || !!match.waitingFor || match.finished} onClick={() => changePitcher("구원투수")}>구원투수 투입</button>
+              <button disabled={!bullpenPitcherId || !playerTeamFielding || !!match.waitingFor || match.finished} onClick={() => changePitcher("마무리투수")}>마무리 투입</button>
+            </div>
+          </div>
           <button className="lineupModalButton" onClick={() => setLineupOpen(true)}>라인업 / 선수교체{(match.pendingSubstitutions?.length ?? 0) ? ` (${match.pendingSubstitutions?.length})` : ""}</button>
           {(match.pendingSubstitutions?.length ?? 0) > 0 && <div className="pendingSubBadge">교체 예약 {match.pendingSubstitutions?.length}건 · 이닝 종료 후 적용</div>}
         </div>
