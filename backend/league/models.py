@@ -31,6 +31,7 @@ class Player(models.Model):
     fielding_stats = models.JSONField(default=dict)
     position_stats = models.JSONField(default=dict)
     pitches = models.JSONField(default=list, blank=True)
+    batting_strategies = models.JSONField(default=list, blank=True)
     max_stamina = models.IntegerField()
     stamina = models.IntegerField()
     condition = models.IntegerField(default=70)

@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import type { AppState, DailyAbsence, FinanceEvent, KimRole, MatchState, PendingSubstitution, Player, Team } from "./types/game";
 import { fetchInitialData, fetchSnapshot, loginAccount, registerAccount, resetBackend, saveSnapshot, type DemoAccount } from "./game/api";
-import { KIM_BAT_CHOICES, PARTY_OPTIONS, PITCH_TABLE } from "./game/config";
+import { BAT_STRATEGY_TABLE, DEFAULT_BATTING_STRATEGIES, PARTY_OPTIONS, PITCH_TABLE } from "./game/config";
 import { createMatch, simulateStep, validateEntry } from "./game/matchEngine";
 import { dayName, gameLabel, hasDayMiniGame, isGameDay, isWeekend, nextScheduleText, weekNumber } from "./game/schedule";
 import { clamp, createRng, effectiveStat, financialStability, money, playerOvr, settleDues, teamMorale, tradeValue } from "./game/utils";
@@ -14,6 +14,7 @@ const KIM_JOB = "청마루 감자탕 후계자";
 const PLAYER_TEAM_NAME = "복사골 피치브라더스";
 const ACCOUNT_KEY = "kabc-demo-account";
 const KIM_ROLES: KimRole[] = ["지명타자", "야수", "루수", "포수", "선발투수", "구원투수", "마무리투수", "투타 겸업", "벤치", "결장"];
+type BattingStrategyChoice = (typeof BAT_STRATEGY_TABLE)[string];
 
 function loadSavedAccount(): DemoAccount | null {
   try {
@@ -33,8 +34,12 @@ function normalizeTeams(teams: Team[]) {
   return teams.map((team) => team.isPlayer ? { ...team, name: PLAYER_TEAM_NAME } : team);
 }
 
-function normalizeKimPlayers(players: Player[]) {
-  return players.map((player) => player.name === KIM_NAME ? { ...player, job: KIM_JOB } : player);
+function normalizePlayerData(players: Player[]) {
+  return players.map((player) => ({
+    ...player,
+    job: player.name === KIM_NAME ? KIM_JOB : player.job,
+    battingStrategies: player.battingStrategies?.length ? player.battingStrategies : [...DEFAULT_BATTING_STRATEGIES]
+  }));
 }
 
 function normalizeLoadedState(state: AppState): AppState {
@@ -45,7 +50,7 @@ function normalizeLoadedState(state: AppState): AppState {
     phase,
     match,
     teams: normalizeTeams(state.teams),
-    players: normalizeKimPlayers(state.players),
+    players: normalizePlayerData(state.players),
     dailyAbsences: (state.dailyAbsences ?? []).filter((absence) => absence.dayIndex === state.dayIndex),
     nightAction: state.nightAction ?? "none",
     nightTrainingCount: state.nightTrainingCount ?? 0,
@@ -56,7 +61,7 @@ function normalizeLoadedState(state: AppState): AppState {
 
 function makeInitialState(data: Awaited<ReturnType<typeof fetchInitialData>>): AppState {
   const playerTeam = data.teams.find((team) => team.isPlayer)!;
-  const players = normalizeKimPlayers(data.players);
+  const players = normalizePlayerData(data.players);
   const roster = players.filter((player) => player.teamId === playerTeam.id);
   const kim = roster.find((player) => player.name === KIM_NAME);
   const entry = [...roster].sort((a, b) => playerOvr(b) - playerOvr(a)).slice(0, 9).map((player) => player.id);
@@ -687,6 +692,7 @@ function FancyPlayerCard({ player, compact = false }: { player: Player; compact?
       <div className="cardMeta">
         <span>{player.battingRole}</span>
         {player.traits.slice(0, compact ? 1 : 2).map((trait) => <span key={trait}>{trait}</span>)}
+        {(player.battingStrategies ?? []).slice(0, compact ? 1 : 4).map((id) => BAT_STRATEGY_TABLE[id] ? <span key={id}>{BAT_STRATEGY_TABLE[id].label}</span> : null)}
         {player.consideringLeave && <span className="danger">이탈 고민</span>}
       </div>
       <div className="cardVitals">
@@ -880,7 +886,12 @@ function LineupManager({ state, setState }: { state: AppState; setState: (fn: (s
           return (
             <div key={id} className="battingRow">
               <strong>{index + 1}번</strong>
-              <span>{player && !absenceIds.has(player.id) ? player.name : "미지정"}</span>
+              {player && !absenceIds.has(player.id) ? (
+                <span className="lineupHoverName">
+                  {player.name}
+                  <FieldTooltipCard player={player} role={`${index + 1}번 타자`} mode="batter" />
+                </span>
+              ) : <span>미지정</span>}
               <small>{player?.primaryPosition ?? "-"}</small>
               <button onClick={() => moveBatter(index, -1)} disabled={index === 0}>▲</button>
               <button onClick={() => moveBatter(index, 1)} disabled={index === state.selectedEntry.length - 1}>▼</button>
@@ -888,9 +899,17 @@ function LineupManager({ state, setState }: { state: AppState; setState: (fn: (s
           );
         })}
       </div>
-      <div className="entryList compactList">{roster.map((player) => {
+      <div className="entryList compactList dugoutEntryList">{roster.map((player) => {
         const absent = absenceIds.has(player.id);
-        return <button key={player.id} disabled={absent} className={state.selectedEntry.includes(player.id) && !absent ? "selected" : ""} onClick={() => toggle(player.id)}><span>#{player.number} {player.name} · {player.primaryPosition}{absent ? " · 결석" : ""}</span><strong>{absent ? "사용불가" : `${player.stamina}/${player.maxStamina}`}</strong></button>;
+        return (
+          <button key={player.id} disabled={absent} className={state.selectedEntry.includes(player.id) && !absent ? "selected" : ""} onClick={() => toggle(player.id)}>
+            <span className="lineupHoverName">
+              #{player.number} {player.name} · {player.primaryPosition}{absent ? " · 결석" : ""}
+              <FieldTooltipCard player={player} role={state.selectedEntry.includes(player.id) ? "선발 후보" : "더그아웃"} mode={player.pitches.length > 0 ? "pitcher" : "fielder"} />
+            </span>
+            <strong>{absent ? "사용불가" : `${player.stamina}/${player.maxStamina}`}</strong>
+          </button>
+        );
       })}</div>
     </Panel>
   );
@@ -979,6 +998,9 @@ function GameView({ state, setState }: { state: AppState; setState: (fn: (s: App
   const away = state.teams.find((team) => team.id === match.awayTeamId)!;
   const waitingPitcher = state.players.find((player) => player.id === match.waitingPitcherId);
   const waitingBatter = state.players.find((player) => player.id === match.waitingBatterId);
+  const waitingBatChoices = (waitingBatter?.battingStrategies?.length ? waitingBatter.battingStrategies : [...DEFAULT_BATTING_STRATEGIES])
+    .map((id) => BAT_STRATEGY_TABLE[id])
+    .filter(Boolean);
   const [isRunning, setIsRunning] = useState(true);
   const [speed, setSpeed] = useState<0.5 | 1 | 2 | 4>(1);
   const [lineupOpen, setLineupOpen] = useState(false);
@@ -1072,7 +1094,7 @@ function GameView({ state, setState }: { state: AppState; setState: (fn: (s: App
             {match.waitingFor ? <div className="kimSpotlight">
               <h3>{match.waitingFor === "kimBat" ? "김철민 타석" : "김철민 투구"}</h3>
               <p>{match.waitingFor === "kimBat" ? `${waitingBatter?.name}이 타석에 들어섰습니다. 어떤 접근을 할까요?` : `${waitingPitcher?.name}이 마운드에서 사인을 봅니다. 구종을 선택하세요.`}</p>
-              {match.waitingFor === "kimBat" && <div className="choiceGrid kimChoiceGrid">{KIM_BAT_CHOICES.map((choice, index) => <KimBatChoiceCard key={choice.id} choice={choice} index={index} onSelect={() => runStep(choice.id)} />)}</div>}
+              {match.waitingFor === "kimBat" && <div className="choiceGrid kimChoiceGrid">{waitingBatChoices.map((choice, index) => <KimBatChoiceCard key={choice.id} choice={choice} index={index} onSelect={() => runStep(choice.id)} />)}</div>}
               {match.waitingFor === "kimPitch" && waitingPitcher && <div className="choiceGrid kimChoiceGrid">{waitingPitcher.pitches.map((pitch, index) => <KimPitchChoiceCard key={pitch} pitcher={waitingPitcher} pitch={pitch} index={index} onSelect={() => runStep(undefined, pitch)} />)}</div>}
             </div> : <div className="duelEmpty">자동 진행 중</div>}
           </div>
@@ -1132,7 +1154,7 @@ function pitchSpeedRange(pitcher: Player, pitchName: string) {
   return `${Math.round(velocity * pitch.speed[0])}-${Math.round(velocity * pitch.speed[1])}km/h`;
 }
 
-function KimBatChoiceCard({ choice, index, onSelect }: { choice: typeof KIM_BAT_CHOICES[number]; index: number; onSelect: () => void }) {
+function KimBatChoiceCard({ choice, index, onSelect }: { choice: BattingStrategyChoice; index: number; onSelect: () => void }) {
   return (
     <button className={`kimChoiceCard batChoice choice-${choice.id}`} style={{ animationDelay: `${index * 70}ms` }} onClick={onSelect}>
       <span className="choiceNo">{String(index + 1).padStart(2, "0")}</span>
@@ -1155,7 +1177,7 @@ function KimPitchChoiceCard({ pitcher, pitch, index, onSelect }: { pitcher: Play
   );
 }
 
-function batChoiceEffect(choice: typeof KIM_BAT_CHOICES[number]) {
+function batChoiceEffect(choice: BattingStrategyChoice) {
   const contact = Number(choice.contact);
   const discipline = Number(choice.discipline);
   const power = Number(choice.power);
@@ -1165,7 +1187,7 @@ function batChoiceEffect(choice: typeof KIM_BAT_CHOICES[number]) {
     discipline !== 1 ? `선구 ${discipline > 1 ? "+" : ""}${Math.round((discipline - 1) * 100)}%` : "",
     power !== 1 ? `장타 ${power > 1 ? "+" : ""}${Math.round((power - 1) * 100)}%` : "",
     speed !== 1 ? `속도 ${speed > 1 ? "+" : ""}${Math.round((speed - 1) * 100)}%` : "",
-    choice.distance ? `비거리 +${choice.distance}m` : ""
+    choice.distance ? `비거리 ${choice.distance > 0 ? "+" : ""}${choice.distance}m` : ""
   ].filter(Boolean);
   return effects.join(" · ");
 }

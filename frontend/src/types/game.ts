@@ -31,6 +31,7 @@ export interface Player {
   fieldingStats: { control: number; velocity: number; awareness: number };
   positionStats: { stuff: number; range: number; jump: number; lead: number };
   pitches: string[];
+  battingStrategies: string[];
   maxStamina: number;
   stamina: number;
   condition: number;

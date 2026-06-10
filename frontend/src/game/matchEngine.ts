@@ -1,5 +1,5 @@
 import type { AppState, LogLine, MatchState, Player, PostGameSummary, Team } from "../types/game";
-import { KIM_BAT_CHOICES, PITCH_TABLE } from "./config";
+import { BAT_STRATEGY_TABLE, DEFAULT_BATTING_STRATEGIES, PITCH_TABLE } from "./config";
 import { clamp, createRng, effectiveStat, hasPosition, playerOvr, teamMorale, weightedPick } from "./utils";
 
 const KIM_NAME = "김철민";
@@ -177,6 +177,27 @@ function kimPrefix(kimInvolved: boolean) {
   return kimInvolved ? "[김철민 개입] " : "";
 }
 
+function battingStrategyIds(player: Player) {
+  const ids = player.battingStrategies?.length ? player.battingStrategies : [...DEFAULT_BATTING_STRATEGIES];
+  return ids.filter((id) => BAT_STRATEGY_TABLE[id]);
+}
+
+function battingStrategyWeight(player: Player, id: string) {
+  const bat = player.battingStats;
+  if (id === "power" || id === "pull") return 1 + bat.power / 35;
+  if (id === "run" || id === "steal") return 1 + bat.speed / 35;
+  if (id === "wait") return 1 + bat.discipline / 35;
+  if (id === "bunt" || id === "opposite") return 1 + (bat.contact + bat.discipline) / 80;
+  return 1 + bat.contact / 35;
+}
+
+function pickBattingStrategy(rng: () => number, player: Player, requestedId?: string) {
+  if (requestedId && BAT_STRATEGY_TABLE[requestedId]) return BAT_STRATEGY_TABLE[requestedId];
+  const ids = battingStrategyIds(player);
+  const picked = weightedPick(rng, ids.map((id) => [id, battingStrategyWeight(player, id)]));
+  return BAT_STRATEGY_TABLE[picked] ?? BAT_STRATEGY_TABLE.contact;
+}
+
 function conditionRoll(rng: () => number, base: number, spread = 7) {
   return clamp(Math.round(base + (rng() * spread * 2 - spread)), 5, 100);
 }
@@ -216,15 +237,7 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
   const speedValue = effectiveStat(pitcher, pitcher.fieldingStats.velocity, pitcherEffect) * (pitch.speed[0] + rng() * (pitch.speed[1] - pitch.speed[0]));
   const pitchSpeedKmh = Math.round(speedValue);
   const recordPlay = (payload: LastPlayInput) => setLastPlay(match, { ...payload, speedKmh: pitchSpeedKmh });
-  const selectedBatChoice = KIM_BAT_CHOICES.find((choice) => choice.id === kimBatChoice);
-  const batChoice = selectedBatChoice ? {
-    contact: selectedBatChoice.contact,
-    discipline: selectedBatChoice.discipline,
-    power: selectedBatChoice.power,
-    speed: selectedBatChoice.speed,
-    distance: selectedBatChoice.distance,
-    stamina: selectedBatChoice.stamina
-  } : { contact: 1, discipline: 1, power: 1, speed: 1, distance: 0, stamina: 0 };
+  const batChoice = pickBattingStrategy(rng, batter, kimBatChoice);
   const controlScore = effectiveStat(pitcher, pitcher.fieldingStats.control, pitcherEffect) + effectiveStat(pitcher, pitcher.fieldingStats.awareness, pitcherEffect) * 0.2 + pitch.controlMod;
   const control = controlResult(controlScore, rng);
   const discipline = effectiveStat(batter, batter.battingStats.discipline, batterEffect) * batChoice.discipline + (pitch.disciplineMod ?? 0);
@@ -235,11 +248,11 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
   if (kimInvolved) {
     broadcast.push(log(`${kimPrefix(true)}${inningText}. ${kimIsBatter ? "타석" : "마운드"}의 김철민에게 시선이 집중됩니다. 상대는 ${kimIsBatter ? pitcher.name : batter.name}, 선택 구종은 ${chosenPitch}, 구속 ${pitchSpeedKmh}km/h.`));
   }
-  ruling.push(log(`${kimPrefix(kimInvolved)}${batter.name} vs ${pitcher.name}: 구종=${chosenPitch}, 구속=${pitchSpeedKmh}km/h, 제구점수=${controlScore.toFixed(1)}, 제구결과=${controlText}, 선구안=${discipline.toFixed(1)}.`));
+  ruling.push(log(`${kimPrefix(kimInvolved)}${batter.name} vs ${pitcher.name}: 타격전략=${batChoice.label}, 구종=${chosenPitch}, 구속=${pitchSpeedKmh}km/h, 제구점수=${controlScore.toFixed(1)}, 제구결과=${controlText}, 선구안=${discipline.toFixed(1)}.`));
 
   const changedPlayers = state.players.map((player) => {
     if (player.id === pitcher.id) return { ...player, stamina: clamp(player.stamina - pitch.stamina, 0, player.maxStamina) };
-    if (kimIsBatter && player.id === batter.id) return { ...player, stamina: clamp(player.stamina - batChoice.stamina, 0, player.maxStamina) };
+    if (player.id === batter.id) return { ...player, stamina: clamp(player.stamina - batChoice.stamina, 0, player.maxStamina) };
     return player;
   });
 
@@ -295,9 +308,18 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
 
   const directionAccuracy = discipline * 0.45 + contactRate * 0.25 - effectiveStat(pitcher, pitcher.fieldingStats.control, pitcherEffect) * 0.2 + (control === "mistake" ? 20 : 0) + (rng() * 30 - 10);
   const direction = directionAccuracy >= 75 ? "중앙" : directionAccuracy >= 30 ? (rng() < 0.5 ? "좌측" : "우측") : "파울";
-  let distance = 20 + effectiveStat(batter, batter.battingStats.power, batterEffect) * batChoice.power * 0.75 + contactRate * 0.25 + speedValue * 0.12 - effectiveStat(pitcher, pitcher.positionStats.stuff, pitcherEffect) * 0.2 + (contactRate - contactRoll) * 0.3 + batChoice.distance + (rng() * 25 - 10);
-  if (batter.battingStats.power < 70) distance -= (70 - batter.battingStats.power) * 0.6;
-  if (batter.battingStats.power >= 80) distance += (batter.battingStats.power - 80) * 0.5;
+  const batterPower = effectiveStat(batter, batter.battingStats.power, batterEffect) * batChoice.power;
+  const pitcherStuff = effectiveStat(pitcher, pitcher.positionStats.stuff, pitcherEffect);
+  const adjustedBatter = {
+    ...batter,
+    battingStats: {
+      ...batter.battingStats,
+      speed: clamp(effectiveStat(batter, batter.battingStats.speed, batterEffect) * batChoice.speed, 1, 120)
+    }
+  };
+  let distance = 18 + batterPower * 0.62 + contactRate * 0.18 + speedValue * 0.07 - pitcherStuff * 0.26 + (contactRate - contactRoll) * 0.26 + batChoice.distance + (rng() * 24 - 12);
+  if (batterPower < 70) distance -= (70 - batterPower) * 0.65;
+  if (batterPower >= 82) distance += (batterPower - 82) * 0.45;
   if (pitch.distanceMod) distance *= pitch.distanceMod;
   if (chosenPitch === "커터" && rng() < 0.1) distance *= 0.5;
   if (chosenPitch === "너클볼" && rng() < 0.3) distance *= 0.5;
@@ -312,6 +334,7 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
 
   const homer = (direction === "중앙" && distance >= 120) || (direction !== "중앙" && distance >= 100);
   let kind = battedBallKind(rng, batter, pitcher, chosenPitch, batterEffect, pitcherEffect);
+  if (batChoice.id === "bunt") kind = "땅볼";
   if (pitch.grounder && rng() * 100 < pitch.grounder) {
     kind = "땅볼";
     if (pitch.groundDistanceMod) distance *= pitch.groundDistanceMod;
@@ -329,7 +352,7 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
   const fielders = match.lineup[fieldingTeamId].map((id) => findPlayer(state, id));
   const defender = defenderFor(direction, distance, kind, fielders, pitcher);
   const quality = clamp(contactRate - contactRoll + 50, 0, 100);
-  const fieldRate = fieldingRate(kind, defender, batter, pitcher, distance, quality, direction);
+  const fieldRate = fieldingRate(kind, defender, adjustedBatter, pitcher, distance, quality, direction);
   const caught = rng() * 100 < fieldRate;
   const errorChance = clamp(Math.max(0, 60 - defender.fieldingStats.awareness) * 0.3 + Math.max(0, 55 - defender.fieldingStats.control) * 0.2, 0, 30);
   if (caught) {

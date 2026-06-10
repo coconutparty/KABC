@@ -49,6 +49,8 @@ PITCHES = [
     "스크류볼",
 ]
 
+BATTING_STRATEGIES = ["contact", "wait", "power", "run", "bunt", "steal", "pull", "opposite", "aggressive"]
+
 TEAM_NAMES = ["복사골 피치브라더스", "인천 사이다즈", "제주 삼다스", "수원 갈비스"]
 FIRST_NAMES = ["김", "박", "이", "최", "정", "강", "조", "윤", "장", "임", "한", "오"]
 LAST_NAMES = ["철민", "민수", "지훈", "성호", "태윤", "준서", "도현", "현우", "상혁", "영재", "기범", "동현"]
@@ -167,6 +169,31 @@ def positions_for(primary):
     return ["지명타자"]
 
 
+def batting_strategies_for(rng, batting):
+    strategies = ["contact", "wait"]
+    if batting["power"] >= 68:
+        strategies.append("power")
+    else:
+        strategies.append("opposite")
+    if batting["speed"] >= 68:
+        strategies.append("steal")
+    elif batting["contact"] >= 70 and batting["discipline"] >= 62:
+        strategies.append("bunt")
+    else:
+        strategies.append(rng.choice(["run", "pull", "aggressive"]))
+
+    unique = []
+    for strategy in strategies:
+        if strategy not in unique:
+            unique.append(strategy)
+    for strategy in rng.sample(BATTING_STRATEGIES, len(BATTING_STRATEGIES)):
+        if len(unique) >= 4:
+            break
+        if strategy not in unique:
+            unique.append(strategy)
+    return unique[:4]
+
+
 def make_player(rng, team, index, primary, is_kim=False):
     age_range = weighted(rng, AGE_BUCKETS)[0]
     age = rng.randint(*age_range)
@@ -214,6 +241,7 @@ def make_player(rng, team, index, primary, is_kim=False):
         pitches = ["직구", "슬라이더", "커브", "포크볼"]
         max_stamina = 100
         traits = ["주인공", "투타 겸업"]
+    batting_strategies = ["contact", "wait", "power", "run"] if is_kim else batting_strategies_for(rng, batting)
 
     return Player(
         team=team,
@@ -228,6 +256,7 @@ def make_player(rng, team, index, primary, is_kim=False):
         fielding_stats=fielding,
         position_stats=position_stats,
         pitches=pitches,
+        batting_strategies=batting_strategies,
         max_stamina=max_stamina,
         stamina=max_stamina,
         condition=rng.randint(58, 88),

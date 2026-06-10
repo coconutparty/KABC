@@ -76,6 +76,7 @@ def serialize_player(player):
         "fieldingStats": player.fielding_stats,
         "positionStats": player.position_stats,
         "pitches": player.pitches,
+        "battingStrategies": player.batting_strategies,
         "maxStamina": player.max_stamina,
         "stamina": player.stamina,
         "condition": player.condition,

@@ -12,16 +12,30 @@ ALLOWED_HOSTS = [
     for host in os.environ.get("ALLOWED_HOSTS", "127.0.0.1,localhost,.railway.app,.up.railway.app").split(",")
     if host.strip()
 ]
-CSRF_TRUSTED_ORIGINS = [
-    origin.strip()
-    for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")
-    if origin.strip()
-]
+
+
+def env_list(name):
+    return [value.strip() for value in os.environ.get(name, "").split(",") if value.strip()]
+
+
+def csrf_origin_for_host(host):
+    if host.startswith("."):
+        return f"https://*{host}"
+    if host in {"127.0.0.1", "localhost"}:
+        return f"http://{host}"
+    return f"https://{host}"
+
+
+CSRF_TRUSTED_ORIGINS = sorted({
+    *env_list("CSRF_TRUSTED_ORIGINS"),
+    *(csrf_origin_for_host(host) for host in ALLOWED_HOSTS),
+})
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 ]
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 INSTALLED_APPS = [
     "django.contrib.admin",

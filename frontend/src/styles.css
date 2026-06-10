@@ -1310,6 +1310,12 @@ dd {
   border: 1px solid rgba(77, 66, 46, 0.12);
 }
 
+.battingRow:hover,
+.dugoutEntryList button:hover {
+  position: relative;
+  z-index: 40;
+}
+
 .battingRow strong {
   color: #b3422a;
 }
@@ -1319,6 +1325,49 @@ dd {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 900;
+}
+
+.lineupHoverName {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  overflow: visible;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.lineupHoverName:hover .fieldTooltip {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.dugoutEntryList {
+  overflow: visible;
+  max-height: none;
+}
+
+.dugoutEntryList button {
+  position: relative;
+  overflow: visible;
+}
+
+.dugoutEntryList .lineupHoverName {
+  flex: 1;
+}
+
+.dugoutEntryList .fieldTooltip {
+  left: 0;
+  transform: translate(0, 8px) scale(0.96);
+}
+
+.dugoutEntryList .lineupHoverName:hover .fieldTooltip {
+  transform: translate(0, 0) scale(1);
+}
+
+.dugoutEntryList .fieldTooltip::before {
+  left: 24px;
 }
 
 .battingRow small {
