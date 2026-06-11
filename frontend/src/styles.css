@@ -641,18 +641,65 @@ button small {
     linear-gradient(145deg, #201508 0%, #5b3b13 46%, #0a0807 100%);
 }
 
-.fancyCard.cardTier-star {
+.fancyCard.cardTier-star,
+.fancyCard.cardTier-gold {
   border-color: #d8dce8;
   background:
     radial-gradient(circle at 70% 18%, rgba(235, 244, 255, 0.42), transparent 21%),
     linear-gradient(145deg, #121a24 0%, #30445b 46%, #080b10 100%);
 }
 
-.fancyCard.cardTier-rookie {
+.fancyCard.cardTier-veteran,
+.fancyCard.cardTier-player {
+  border-color: #d8b872;
+  background:
+    radial-gradient(circle at 70% 18%, rgba(255, 218, 132, 0.32), transparent 21%),
+    linear-gradient(145deg, #1d1a13 0%, #514224 46%, #0c0a07 100%);
+}
+
+.fancyCard.cardTier-rookie,
+.fancyCard.cardTier-member,
+.fancyCard.cardTier-amateur {
   border-color: #c28b55;
   background:
     radial-gradient(circle at 70% 18%, rgba(236, 174, 104, 0.28), transparent 21%),
     linear-gradient(145deg, #17110c 0%, #3a2416 46%, #0b0806 100%);
+}
+
+.fancyCard.cardStars-1 {
+  border-color: #9ba7a6;
+  background:
+    radial-gradient(circle at 68% 18%, rgba(255, 255, 255, 0.14), transparent 20%),
+    linear-gradient(145deg, #1f2726 0%, #40504b 48%, #101514 100%);
+}
+
+.fancyCard.cardStars-2 {
+  border-color: #d39a5a;
+  background:
+    radial-gradient(circle at 68% 18%, rgba(255, 201, 137, 0.28), transparent 21%),
+    linear-gradient(145deg, #20140d 0%, #6b4426 48%, #110908 100%);
+}
+
+.fancyCard.cardStars-3 {
+  border-color: #70b9ff;
+  background:
+    radial-gradient(circle at 68% 18%, rgba(147, 213, 255, 0.34), transparent 21%),
+    linear-gradient(145deg, #0e2130 0%, #245a79 48%, #061019 100%);
+}
+
+.fancyCard.cardStars-4 {
+  border-color: #f7d567;
+  background:
+    radial-gradient(circle at 68% 18%, rgba(255, 235, 136, 0.48), transparent 22%),
+    linear-gradient(145deg, #17291e 0%, #17705b 42%, #654414 76%, #0d0d08 100%);
+}
+
+.fancyCard.cardStars-5 {
+  border-color: #fff0a5;
+  background:
+    radial-gradient(circle at 68% 18%, rgba(255, 255, 216, 0.72), transparent 24%),
+    conic-gradient(from 210deg at 50% 42%, #251000, #845719, #ffe783, #126b7b, #281200, #251000);
+  box-shadow: 0 20px 42px rgba(0,0,0,0.38), 0 0 34px rgba(255, 220, 93, 0.36), inset 0 0 0 1px rgba(255,255,255,0.28);
 }
 
 .cardTop {
@@ -1031,6 +1078,132 @@ dd {
 .entryList button.selected {
   border-color: #1f6f8b;
   background: #e8f4f8;
+}
+
+.recruitBoard {
+  display: grid;
+  gap: 12px;
+}
+
+.recruitBrief {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.recruitStart {
+  min-height: 58px;
+}
+
+.recruitStart small {
+  display: block;
+  margin-top: 4px;
+  opacity: 0.82;
+}
+
+.applicationDeck {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+  min-height: 170px;
+  align-items: stretch;
+}
+
+.paperEmpty {
+  grid-column: 1 / -1;
+  display: grid;
+  place-items: center;
+  min-height: 156px;
+  margin: 0;
+  border: 1px dashed rgba(31, 111, 139, 0.34);
+  border-radius: 8px;
+  color: #4f6f75;
+  background: rgba(255, 255, 255, 0.48);
+  font-weight: 800;
+}
+
+.applicationPaper {
+  position: relative;
+  display: grid;
+  align-content: space-between;
+  min-height: 156px;
+  padding: 14px 12px;
+  overflow: hidden;
+  color: #153034;
+  text-align: left;
+  border-width: 2px;
+  border-radius: 8px;
+  background: #f3f7f5;
+  box-shadow: 0 14px 24px rgba(39, 71, 82, 0.14);
+  opacity: 0;
+  transform-origin: 50% 90%;
+  animation: applicationReveal 420ms cubic-bezier(.2,.86,.24,1.18) both;
+}
+
+.applicationPaper::before {
+  content: "";
+  position: absolute;
+  inset: -30% -10% auto;
+  height: 70px;
+  transform: rotate(-10deg);
+  background: rgba(255,255,255,0.5);
+}
+
+.applicationPaper:hover {
+  transform: translateY(-4px) rotate(-0.8deg);
+  box-shadow: 0 18px 30px rgba(39, 71, 82, 0.22);
+}
+
+.applicationPaper .paperNo {
+  color: inherit;
+  font-size: 11px;
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+  opacity: 0.72;
+}
+
+.applicationPaper strong {
+  position: relative;
+  z-index: 1;
+  display: block;
+  font-size: 20px;
+  font-weight: 1000;
+}
+
+.applicationPaper span,
+.applicationPaper small {
+  position: relative;
+  z-index: 1;
+  font-weight: 900;
+}
+
+.applicationPaper.stars-1 {
+  border-color: #9daaa6;
+  background: linear-gradient(155deg, #f2f5f1, #cbd8d1);
+}
+
+.applicationPaper.stars-2 {
+  border-color: #d1914e;
+  background: linear-gradient(155deg, #fff0dc, #d99b61);
+}
+
+.applicationPaper.stars-3 {
+  border-color: #4da7e4;
+  background: linear-gradient(155deg, #e8f7ff, #6dc6ee);
+}
+
+.applicationPaper.stars-4 {
+  border-color: #d8b33e;
+  background: linear-gradient(155deg, #fff6b8, #78d7c2 55%, #e0aa40);
+}
+
+.applicationPaper.stars-5 {
+  border-color: #fff0a5;
+  color: #fff9d8;
+  background:
+    radial-gradient(circle at 72% 15%, rgba(255,255,255,0.9), transparent 15%),
+    linear-gradient(145deg, #15100b, #805414 45%, #0e6d86 72%, #140b05);
+  box-shadow: 0 18px 34px rgba(0,0,0,0.24), 0 0 24px rgba(255, 221, 91, 0.36);
 }
 
 .scoreboard,
@@ -2864,6 +3037,40 @@ dd {
   animation: modalFade 180ms ease both;
 }
 
+.recruitModal {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(220px, 280px);
+  gap: 18px;
+  align-items: center;
+  width: min(720px, 94vw);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 18px;
+  border: 2px solid #f5d77d;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 20% 0, rgba(143, 214, 255, 0.28), transparent 34%),
+    linear-gradient(145deg, #082332, #15525e 48%, #133317);
+  box-shadow: 0 30px 80px rgba(0,0,0,0.58), inset 0 0 0 1px rgba(255,255,255,0.16);
+  animation: modalPop 260ms cubic-bezier(.18,.89,.32,1.18) both;
+}
+
+.modalCardWrap {
+  display: grid;
+  justify-items: center;
+}
+
+.modalActions {
+  display: grid;
+  gap: 12px;
+}
+
+.modalActions button {
+  min-height: 48px;
+  font-size: 15px;
+  font-weight: 1000;
+}
+
 .lineupModal {
   width: min(1180px, 96vw);
   max-height: min(820px, 90vh);
@@ -3157,9 +3364,131 @@ dd {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes applicationReveal {
+  from { opacity: 0; transform: translateY(24px) rotate(4deg) scale(0.88); filter: blur(3px); }
+  70% { opacity: 1; transform: translateY(-5px) rotate(-1deg) scale(1.025); filter: blur(0); }
+  to { opacity: 1; transform: translateY(0) rotate(0) scale(1); filter: blur(0); }
+}
+
 .scoreLarge {
   display: block;
   font-size: 26px;
+}
+
+.analyticsRoom {
+  display: grid;
+  gap: 14px;
+}
+
+.recordSelector {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.recordSelector button {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.recordSelector button.selected {
+  border-color: #1f6f8b;
+  background: #e8f4f8;
+}
+
+.boxScore {
+  display: grid;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.boxRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) repeat(7, 42px) 52px;
+  gap: 4px;
+  align-items: center;
+}
+
+.boxRow span,
+.boxRow b,
+.boxRow strong {
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.72);
+  text-align: center;
+  font-weight: 900;
+}
+
+.boxRow span {
+  text-align: left;
+}
+
+.boxRow.head span,
+.boxRow.head b,
+.boxRow.head strong {
+  color: #ffffff;
+  background: #1f6f8b;
+}
+
+.statTable {
+  display: grid;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.statHead,
+.statRow {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.4fr) repeat(11, minmax(54px, 0.55fr));
+  gap: 4px;
+  min-width: 820px;
+  align-items: center;
+}
+
+.pitcherStats .statHead,
+.pitcherStats .statRow {
+  grid-template-columns: minmax(130px, 1.4fr) repeat(11, minmax(54px, 0.55fr));
+}
+
+.statHead span,
+.statRow span {
+  min-height: 34px;
+  display: grid;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.74);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.statHead span {
+  color: #ffffff;
+  background: #195d63;
+  font-weight: 1000;
+}
+
+.statRow span:not(:first-child) {
+  justify-content: center;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.logReplayGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.logReplayGrid h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.logReplayGrid .logList {
+  max-height: 420px;
+  overflow: auto;
 }
 
 .choiceBox {

@@ -1,4 +1,4 @@
-import type { AppState, LogLine, MatchState, Player, PostGameSummary, Team } from "../types/game";
+import type { AppState, GameAnalysisRecord, LogLine, MatchState, Player, PlayerGameStats, PostGameSummary, Team } from "../types/game";
 import { BAT_STRATEGY_TABLE, DEFAULT_BATTING_STRATEGIES, PITCH_TABLE } from "./config";
 import { clamp, createRng, effectiveStat, hasPosition, playerOvr, teamMorale, weightedPick } from "./utils";
 
@@ -58,6 +58,8 @@ export function createMatch(state: AppState): MatchState {
     count: { balls: 0, strikes: 0 },
     broadcast: [log(`플레이볼! ${playerTeam.name}와 ${opponent.name}의 7이닝 경기가 시작됩니다.`)],
     rulings: [log(`엔트리 검증: 홈 ${forcedEntry.length}명, 원정 ${opponentRoster.length}명. 김철민 역할=${state.kimRole}.`)],
+    inningRuns: { [playerTeam.id]: [], [opponent.id]: [] },
+    playerGameStats: {},
     waitingFor: null,
     coldGame: false,
     finished: false,
@@ -87,7 +89,7 @@ function maybeEmotion(rng: () => number, team: Team, player: Player, inning: num
   const slackChance = Math.max(0, 55 - morale) * 0.12 + Math.max(0, 45 - team.trust) * 0.12 + Math.max(0, 45 - team.fairness) * 0.1;
   if (rng() * 100 < gritChance) {
     match.inningEffects[player.id] = { type: "투지", until: inning + 2 };
-    logs.push(log(`${player.name} 선수가 투지를 불태우고 있습니다! 3이닝 동안 스탯 +5%, 페널티를 무시합니다.`));
+    logs.push(log(`${player.name} 선수가 투지를 불태우고 있습니다! 3이닝 동안 스탯 +10%, 페널티를 무시합니다.`));
   } else if (rng() * 100 < slackChance) {
     match.inningEffects[player.id] = { type: "태업", until: inning + 2 };
     logs.push(log(`${player.name} 선수가 태업 중입니다. 3이닝 동안 모든 스탯 -10%.`));
@@ -98,8 +100,8 @@ function maybeEmotion(rng: () => number, team: Team, player: Player, inning: num
 function controlResult(score: number, rng: () => number) {
   const rows: Array<[string, number]> =
     score >= 90 ? [["zone", 75], ["ball", 20], ["mistake", 5], ["danger", 0]] :
-    score >= 70 ? [["zone", 60], ["ball", 30], ["mistake", 8], ["danger", 2]] :
-    score >= 50 ? [["zone", 45], ["ball", 38], ["mistake", 12], ["danger", 5]] :
+    score >= 70 ? [["zone", 48], ["ball", 42], ["mistake", 8], ["danger", 2]] :
+    score >= 50 ? [["zone", 35], ["ball", 48], ["mistake", 12], ["danger", 5]] :
     score >= 30 ? [["zone", 30], ["ball", 45], ["mistake", 15], ["danger", 10]] :
     [["zone", 20], ["ball", 45], ["mistake", 15], ["danger", 20]];
   return weightedPick(rng, rows);
@@ -144,22 +146,130 @@ function assignDefense(fielders: Player[], pitcher: Player) {
 
 function advanceRunners(match: MatchState, battingTeamId: number, batterId: number, bases: number, broadcast: LogLine[], ruling: LogLine[]) {
   let runs = 0;
+  const scorers: number[] = [];
   const next: Array<number | null> = [null, null, null];
   for (let i = 2; i >= 0; i--) {
     const runner = match.bases[i];
     if (!runner) continue;
     const target = i + bases;
-    if (target >= 3) runs += 1;
+    if (target >= 3) {
+      runs += 1;
+      scorers.push(runner);
+    }
     else next[target] = runner;
   }
-  if (bases >= 4) runs += 1;
+  if (bases >= 4) {
+    runs += 1;
+    scorers.push(batterId);
+  }
   else next[bases - 1] = batterId;
   match.bases = next;
-  match.score[battingTeamId] += runs;
+  addTeamRuns(match, battingTeamId, runs);
   if (runs > 0) {
     broadcast.push(log(`${runs}점이 들어옵니다. 스코어 ${match.score[match.awayTeamId]} 대 ${match.score[match.homeTeamId]}.`));
     ruling.push(log(`주루 판정: 타자 ${bases}루 진루, 득점 ${runs}.`));
   }
+  return { runs, scorers };
+}
+
+function playerById(players: Player[], id: number | null) {
+  return id ? players.find((player) => player.id === id) : undefined;
+}
+
+function runAdvanceRate(runner: Player, defender: Player, depthBonus: number, baseBonus: number) {
+  return clamp(runner.battingStats.speed + depthBonus + baseBonus - defender.fieldingStats.velocity * 0.35 - defender.fieldingStats.control * 0.2, 5, 92);
+}
+
+function advanceOnHit(match: MatchState, battingTeamId: number, batterId: number, bases: number, players: Player[], defender: Player, distance: number, kind: string, rng: () => number, broadcast: LogLine[], ruling: LogLine[]) {
+  let runs = 0;
+  const scorers: number[] = [];
+  const next: Array<number | null> = [null, null, null];
+  const depthBonus = distance >= 90 ? 22 : distance >= 75 ? 12 : distance >= 50 ? 0 : -10;
+  const kindBonus = kind === "라인드라이브" ? 8 : kind === "땅볼" ? -6 : 0;
+  const outBonus = match.outs === 2 ? 8 : 0;
+  const placeRunner = (runnerId: number, preferredTarget: number) => {
+    let target = preferredTarget;
+    while (target >= 0 && next[target] !== null) target -= 1;
+    if (target >= 0) next[target] = runnerId;
+  };
+
+  for (let i = 2; i >= 0; i--) {
+    const runnerId = match.bases[i];
+    if (!runnerId) continue;
+    const runner = playerById(players, runnerId);
+    if (!runner) continue;
+    const forcedTarget = i + bases;
+    if (forcedTarget >= 3) {
+      runs += 1;
+      scorers.push(runnerId);
+      ruling.push(log(`주루 기본 진루: ${runner.name} 득점.`));
+      continue;
+    }
+    let target = forcedTarget;
+    if (bases === 1 && i === 1) {
+      const rate = runAdvanceRate(runner, defender, depthBonus + kindBonus + outBonus, 24);
+      if (rng() * 100 < rate) {
+        runs += 1;
+        scorers.push(runnerId);
+        ruling.push(log(`추가 진루 성공: ${runner.name} 2루에서 홈 쇄도, 성공률=${rate.toFixed(1)}%.`));
+        continue;
+      }
+      ruling.push(log(`추가 진루 보류: ${runner.name} 2루에서 3루까지, 홈 쇄도 성공률=${rate.toFixed(1)}%.`));
+      target = 2;
+    } else if (bases === 1 && i === 0 && distance >= 55) {
+      const rate = runAdvanceRate(runner, defender, depthBonus + kindBonus + outBonus, 4);
+      if (rng() * 100 < rate) {
+        target = 2;
+        ruling.push(log(`추가 진루 성공: ${runner.name} 1루에서 3루까지, 성공률=${rate.toFixed(1)}%.`));
+      } else {
+        ruling.push(log(`추가 진루 실패 판단: ${runner.name} 1루에서 2루까지, 3루 시도 성공률=${rate.toFixed(1)}%.`));
+      }
+    } else if (bases === 2 && i === 0) {
+      const rate = runAdvanceRate(runner, defender, depthBonus + kindBonus + outBonus, 30);
+      if (rng() * 100 < rate) {
+        runs += 1;
+        scorers.push(runnerId);
+        ruling.push(log(`추가 진루 성공: ${runner.name} 1루에서 홈까지, 성공률=${rate.toFixed(1)}%.`));
+        continue;
+      }
+      target = 2;
+      ruling.push(log(`추가 진루 보류: ${runner.name} 1루에서 3루까지, 홈 쇄도 성공률=${rate.toFixed(1)}%.`));
+    }
+    placeRunner(runnerId, target);
+  }
+
+  if (bases >= 4) {
+    runs += 1;
+    scorers.push(batterId);
+  }
+  else placeRunner(batterId, bases - 1);
+  match.bases = next;
+  addTeamRuns(match, battingTeamId, runs);
+  if (runs > 0) {
+    broadcast.push(log(`${runs}점이 들어옵니다. 스코어 ${match.score[match.awayTeamId]} 대 ${match.score[match.homeTeamId]}.`));
+    ruling.push(log(`주루 판정: 타자 ${bases}루 진루, 득점 ${runs}.`));
+  }
+  return { runs, scorers };
+}
+
+function advanceOnCaughtOut(match: MatchState, battingTeamId: number, players: Player[], defender: Player, distance: number, kind: string, rng: () => number, broadcast: LogLine[], ruling: LogLine[]) {
+  if (match.outs >= 3) return { runs: 0, scorers: [] as number[] };
+  const runnerId = match.bases[2];
+  const runner = playerById(players, runnerId);
+  if (!runner) return { runs: 0, scorers: [] as number[] };
+  if (kind === "플라이" && distance >= 55) {
+    const rate = clamp(runner.battingStats.speed + distance * 0.28 - defender.fieldingStats.velocity * 0.38 - defender.fieldingStats.control * 0.2 + 12, 5, 90);
+    if (rng() * 100 < rate) {
+      match.bases[2] = null;
+      addTeamRuns(match, battingTeamId, 1);
+      broadcast.push(log(`${runner.name}이 태그업합니다. 홈까지 파고들어 희생플라이 득점입니다.`));
+      ruling.push(log(`희생플라이 주루 성공: 주자=${runner.name}, 성공률=${rate.toFixed(1)}%, 비거리=${distance.toFixed(1)}m, 송구=${defender.fieldingStats.velocity}.`));
+      return { runs: 1, scorers: [runner.id] };
+    } else {
+      ruling.push(log(`희생플라이 주루 보류: 주자=${runner.name}, 성공률=${rate.toFixed(1)}%, 비거리=${distance.toFixed(1)}m.`));
+    }
+  }
+  return { runs: 0, scorers: [] as number[] };
 }
 
 type LastPlayInput = Omit<NonNullable<MatchState["lastPlay"]>, "count" | "isAtBatOver" | "speedKmh"> & Partial<Pick<NonNullable<MatchState["lastPlay"]>, "count" | "isAtBatOver" | "speedKmh">>;
@@ -171,6 +281,80 @@ function setLastPlay(match: MatchState, payload: LastPlayInput) {
     count: payload.count ?? { ...match.count },
     isAtBatOver: payload.isAtBatOver ?? false
   };
+}
+
+function blankPlayerGameStats(player: Player): PlayerGameStats {
+  return {
+    playerId: player.id,
+    teamId: player.teamId,
+    name: player.name,
+    batting: { pa: 0, ab: 0, hits: 0, doubles: 0, triples: 0, hr: 0, bb: 0, hbp: 0, rbi: 0, runs: 0, so: 0, sf: 0, roe: 0 },
+    pitching: { outs: 0, bf: 0, hits: 0, runs: 0, earnedRuns: 0, bb: 0, hbp: 0, so: 0, hr: 0 }
+  };
+}
+
+function gameStatsFor(match: MatchState, player: Player) {
+  if (!match.playerGameStats) match.playerGameStats = {};
+  if (!match.playerGameStats[player.id]) match.playerGameStats[player.id] = blankPlayerGameStats(player);
+  return match.playerGameStats[player.id];
+}
+
+function addTeamRuns(match: MatchState, teamId: number, runs: number) {
+  if (runs <= 0) return;
+  match.score[teamId] += runs;
+  if (!match.inningRuns) match.inningRuns = {};
+  const rows = match.inningRuns[teamId] ?? [];
+  const index = Math.max(0, match.inning - 1);
+  rows[index] = (rows[index] ?? 0) + runs;
+  match.inningRuns[teamId] = rows;
+}
+
+function markScorers(match: MatchState, players: Player[], scorerIds: number[]) {
+  for (const scorerId of scorerIds) {
+    const scorer = playerById(players, scorerId);
+    if (scorer) gameStatsFor(match, scorer).batting.runs += 1;
+  }
+}
+
+function recordPlateAppearance(match: MatchState, batter: Player, pitcher: Player, players: Player[], result: "out" | "single" | "double" | "triple" | "homer" | "walk" | "hbp" | "error" | "sacFly", runs: number, scorerIds: number[], strikeout = false) {
+  const batting = gameStatsFor(match, batter).batting;
+  const pitching = gameStatsFor(match, pitcher).pitching;
+  batting.pa += 1;
+  pitching.bf += 1;
+  batting.rbi += result === "error" ? 0 : runs;
+  markScorers(match, players, scorerIds);
+
+  if (result === "walk") {
+    batting.bb += 1;
+    pitching.bb += 1;
+  } else if (result === "hbp") {
+    batting.hbp += 1;
+    pitching.hbp += 1;
+  } else if (result === "sacFly") {
+    batting.sf += 1;
+    pitching.outs += 1;
+  } else {
+    batting.ab += 1;
+  }
+
+  if (result === "single" || result === "double" || result === "triple" || result === "homer") {
+    batting.hits += 1;
+    pitching.hits += 1;
+  }
+  if (result === "double") batting.doubles += 1;
+  if (result === "triple") batting.triples += 1;
+  if (result === "homer") {
+    batting.hr += 1;
+    pitching.hr += 1;
+  }
+  if (result === "error") batting.roe += 1;
+  if (result === "out") pitching.outs += 1;
+  if (strikeout) {
+    batting.so += 1;
+    pitching.so += 1;
+  }
+  pitching.runs += runs;
+  pitching.earnedRuns += result === "error" ? 0 : runs;
 }
 
 function kimPrefix(kimInvolved: boolean) {
@@ -197,6 +381,50 @@ function pickBattingStrategy(rng: () => number, player: Player, strategyTable: t
   if (!ids.length) return strategyTable.contact ?? BAT_STRATEGY_TABLE.contact;
   const picked = weightedPick(rng, ids.map((id) => [id, battingStrategyWeight(player, id)]));
   return strategyTable[picked] ?? strategyTable.contact ?? BAT_STRATEGY_TABLE.contact;
+}
+
+function strategySwingAggression(id: string) {
+  const table: Record<string, number> = {
+    contact: 5,
+    wait: -24,
+    power: 12,
+    run: 3,
+    bunt: 8,
+    steal: -6,
+    pull: 15,
+    opposite: -4,
+    aggressive: 22
+  };
+  return table[id] ?? 0;
+}
+
+function strategyRecognitionBonus(id: string) {
+  const table: Record<string, number> = {
+    contact: 2,
+    wait: 14,
+    power: -2,
+    run: 1,
+    bunt: 5,
+    steal: 6,
+    pull: -4,
+    opposite: 5,
+    aggressive: -8
+  };
+  return table[id] ?? 0;
+}
+
+function swingDecision(rng: () => number, control: string, speedValue: number, batter: Player, batterEffect: { type: "투지" | "태업"; until: number } | undefined, batChoice: typeof BAT_STRATEGY_TABLE[string], discipline: number) {
+  const velocityPressure = Math.max(0, speedValue - 135) * 0.25;
+  const recognition = discipline + strategyRecognitionBonus(batChoice.id) - velocityPressure;
+  const aggression = strategySwingAggression(batChoice.id);
+  const contact = effectiveStat(batter, batter.battingStats.contact, batterEffect);
+  const power = effectiveStat(batter, batter.battingStats.power, batterEffect);
+  const isStrikeLike = control === "zone" || control === "mistake";
+  const swingChance = isStrikeLike
+    ? clamp(60 + contact * 0.15 + power * 0.08 - recognition * 0.1 + aggression - velocityPressure * 0.35, 12, 94)
+    : clamp(22 + aggression - recognition * 0.55 + velocityPressure * 0.08, 4, 88);
+  const roll = rng() * 100;
+  return { swings: roll < swingChance, swingChance, roll, recognition, velocityPressure, aggression };
 }
 
 function conditionRoll(rng: () => number, base: number, spread = 7) {
@@ -244,14 +472,14 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
   const controlScore = effectiveStat(pitcher, pitcher.fieldingStats.control, pitcherEffect) + effectiveStat(pitcher, pitcher.fieldingStats.awareness, pitcherEffect) * 0.2 + pitch.controlMod;
   const control = controlResult(controlScore, rng);
   const discipline = effectiveStat(batter, batter.battingStats.discipline, batterEffect) * batChoice.discipline + (pitch.disciplineMod ?? 0);
-  const takesBadPitch = (control === "ball" || control === "danger") && rng() * 100 < clamp(discipline, 5, 95);
+  const swing = swingDecision(rng, control, speedValue, batter, batterEffect, batChoice, discipline);
   const controlText = control === "zone" ? "스트라이크존" : control === "ball" ? "볼" : control === "mistake" ? "실투" : "위협구";
   const inningText = `${match.inning}회${match.top ? "초" : "말"} ${match.outs}사`;
 
   if (kimInvolved) {
     broadcast.push(log(`${kimPrefix(true)}${inningText}. ${kimIsBatter ? "타석" : "마운드"}의 김철민에게 시선이 집중됩니다. 상대는 ${kimIsBatter ? pitcher.name : batter.name}, 선택 구종은 ${chosenPitch}, 구속 ${pitchSpeedKmh}km/h.`));
   }
-  ruling.push(log(`${kimPrefix(kimInvolved)}${batter.name} vs ${pitcher.name}: 타격전략=${batChoice.label}, 구종=${chosenPitch}, 구속=${pitchSpeedKmh}km/h, 제구점수=${controlScore.toFixed(1)}, 제구결과=${controlText}, 선구안=${discipline.toFixed(1)}.`));
+  ruling.push(log(`${kimPrefix(kimInvolved)}${batter.name} vs ${pitcher.name}: 타격전략=${batChoice.label}, 구종=${chosenPitch}, 구속=${pitchSpeedKmh}km/h, 제구점수=${controlScore.toFixed(1)}, 제구결과=${controlText}, 선구안=${discipline.toFixed(1)}, 인식점수=${swing.recognition.toFixed(1)}, 구속압박=${swing.velocityPressure.toFixed(1)}, 스윙확률=${swing.swingChance.toFixed(1)}%, 롤=${swing.roll.toFixed(1)}.`));
 
   const changedPlayers = state.players.map((player) => {
     if (player.id === pitcher.id) return { ...player, stamina: clamp(player.stamina - pitch.stamina, 0, player.maxStamina) };
@@ -259,27 +487,42 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
     return player;
   });
 
-  if (control === "danger") {
-    const hbp = chosenPitch === "슬라이더" ? (100 - pitcher.fieldingStats.control) * 0.1 : 18;
+  if (control === "danger" && !swing.swings) {
+    const hbp = chosenPitch === "슬라이더" ? (100 - pitcher.fieldingStats.control) * 0.1 : 8;
     if (rng() * 100 < hbp) {
       broadcast.push(log(`${kimPrefix(kimInvolved)}${inningText}. ${chosenPitch} ${pitchSpeedKmh}km/h가 몸쪽 깊게 들어가 ${batter.name}이 몸에 맞는 공으로 출루합니다.`));
       ruling.push(log(`${kimPrefix(kimInvolved)}데드볼 판정 성공. 구속=${pitchSpeedKmh}km/h, 확률=${hbp.toFixed(1)}%.`));
       recordPlay({ batterId: batter.id, pitcherId: pitcher.id, pitch: chosenPitch, direction: "중앙", distance: 0, kind: "데드볼", result: "출루", kimInvolved });
-      advanceRunners(match, battingTeamId, batter.id, 1, broadcast, ruling);
+      const advance = advanceRunners(match, battingTeamId, batter.id, 1, broadcast, ruling);
+      recordPlateAppearance(match, batter, pitcher, changedPlayers, "hbp", advance.runs, advance.scorers);
       afterAtBat(match, battingTeamId, state, changedPlayers, broadcast, ruling);
       return finishIfNeeded({ ...state, seed: state.seed + 1, players: changedPlayers, match: { ...match, broadcast, rulings: ruling, waitingFor: null } });
     }
   }
 
-  if (takesBadPitch) {
+  if (!swing.swings) {
+    if (control === "zone" || control === "mistake") {
+      match.count = { ...match.count, strikes: match.count.strikes + 1 };
+      const struckOut = match.count.strikes >= 3;
+      if (struckOut) match.outs += 1;
+      broadcast.push(log(`${kimPrefix(kimInvolved)}${inningText}. ${batter.name}이 ${chosenPitch} ${pitchSpeedKmh}km/h를 지켜봅니다. 스트라이크입니다. ${struckOut ? "삼진 아웃입니다." : `카운트 ${match.count.balls}-${match.count.strikes}.`}`));
+      ruling.push(log(`${kimPrefix(kimInvolved)}루킹 스트라이크: 제구=${controlText}, 인식점수=${swing.recognition.toFixed(1)}, 스윙확률=${swing.swingChance.toFixed(1)}%, 롤=${swing.roll.toFixed(1)}, 스트라이크=${match.count.strikes}.`));
+      recordPlay({ batterId: batter.id, pitcherId: pitcher.id, pitch: chosenPitch, direction: "중앙", distance: 0, kind: "루킹 스트라이크", result: struckOut ? "아웃" : "스트라이크", kimInvolved, isAtBatOver: struckOut });
+      if (struckOut) {
+        recordPlateAppearance(match, batter, pitcher, changedPlayers, "out", 0, [], true);
+        afterAtBat(match, battingTeamId, state, changedPlayers, broadcast, ruling);
+      }
+      return returnPitchState(state, match, changedPlayers, broadcast, ruling);
+    }
     match.count = { ...match.count, balls: match.count.balls + 1 };
     const walked = match.count.balls >= 4;
     broadcast.push(log(`${kimPrefix(kimInvolved)}${inningText}. ${batter.name}, ${chosenPitch} ${pitchSpeedKmh}km/h를 끝까지 골라냅니다. 볼입니다. 카운트 ${match.count.balls}-${match.count.strikes}.`));
-    ruling.push(log(`${kimPrefix(kimInvolved)}선구안 판정 성공: 나쁜 공 참기/회피. 구속=${pitchSpeedKmh}km/h, 볼 ${match.count.balls}, 스트라이크 ${match.count.strikes}.`));
+    ruling.push(log(`${kimPrefix(kimInvolved)}나쁜 공 참기: 인식점수=${swing.recognition.toFixed(1)}, 스윙확률=${swing.swingChance.toFixed(1)}%, 롤=${swing.roll.toFixed(1)}, 구속=${pitchSpeedKmh}km/h, 볼 ${match.count.balls}, 스트라이크 ${match.count.strikes}.`));
     recordPlay({ batterId: batter.id, pitcherId: pitcher.id, pitch: chosenPitch, direction: "중앙", distance: 0, kind: walked ? "볼넷" : "볼", result: walked ? "출루" : "볼", kimInvolved, isAtBatOver: walked });
     if (walked) {
       broadcast.push(log(`${batter.name}이 볼넷으로 1루에 걸어 나갑니다.`));
-      advanceRunners(match, battingTeamId, batter.id, 1, broadcast, ruling);
+      const advance = advanceRunners(match, battingTeamId, batter.id, 1, broadcast, ruling);
+      recordPlateAppearance(match, batter, pitcher, changedPlayers, "walk", advance.runs, advance.scorers);
       afterAtBat(match, battingTeamId, state, changedPlayers, broadcast, ruling);
     }
     return returnPitchState(state, match, changedPlayers, broadcast, ruling);
@@ -287,7 +530,8 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
 
   const stuffPenalty = Math.max(0, effectiveStat(pitcher, pitcher.positionStats.stuff, pitcherEffect) - 60) * 0.3;
   const speedPenalty = Math.max(0, speedValue - 140) * 0.15;
-  const contact = effectiveStat(batter, batter.battingStats.contact, batterEffect) * batChoice.contact + pitch.contactMod - stuffPenalty - speedPenalty + (control === "mistake" ? 10 : 0);
+  const badPitchSwingPenalty = control === "danger" ? -18 : control === "ball" ? -12 : 0;
+  const contact = effectiveStat(batter, batter.battingStats.contact, batterEffect) * batChoice.contact + pitch.contactMod - stuffPenalty - speedPenalty + badPitchSwingPenalty + (control === "mistake" ? 10 : 0);
   const contactRate = clamp(contact, 5, 95);
   const contactRoll = rng() * 100;
   if (contactRoll > contactRate) {
@@ -304,7 +548,10 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
       broadcast.push(log(`${kimPrefix(kimInvolved)}${inningText}. ${batter.name}이 ${chosenPitch} ${pitchSpeedKmh}km/h에 헛스윙합니다. ${struckOut ? "삼진 아웃입니다." : `카운트 ${match.count.balls}-${match.count.strikes}.`}`));
       ruling.push(log(`${kimPrefix(kimInvolved)}컨택 판정 실패. 구속=${pitchSpeedKmh}km/h, 컨택률=${contactRate.toFixed(1)}, 롤=${contactRoll.toFixed(1)}, 스트라이크=${match.count.strikes}.`));
       recordPlay({ batterId: batter.id, pitcherId: pitcher.id, pitch: chosenPitch, direction: "중앙", distance: 0, kind: "헛스윙", result: struckOut ? "아웃" : "스트라이크", kimInvolved, isAtBatOver: struckOut });
-      if (struckOut) afterAtBat(match, battingTeamId, state, changedPlayers, broadcast, ruling);
+      if (struckOut) {
+        recordPlateAppearance(match, batter, pitcher, changedPlayers, "out", 0, [], true);
+        afterAtBat(match, battingTeamId, state, changedPlayers, broadcast, ruling);
+      }
     }
     return returnPitchState(state, match, changedPlayers, broadcast, ruling);
   }
@@ -347,7 +594,8 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
     broadcast.push(log(`${kimPrefix(kimInvolved)}${inningText}. ${batter.name}이 ${chosenPitch} ${pitchSpeedKmh}km/h를 받아칩니다! ${direction} 담장을 넘어가는 홈런입니다.`));
     ruling.push(log(`${kimPrefix(kimInvolved)}홈런 판정: 구속=${pitchSpeedKmh}km/h, 방향=${direction}, 비거리=${distance.toFixed(1)}m, 타구성질=${kind}.`));
     recordPlay({ batterId: batter.id, pitcherId: pitcher.id, pitch: chosenPitch, direction, distance, kind, result: "홈런", kimInvolved });
-    advanceRunners(match, battingTeamId, batter.id, 4, broadcast, ruling);
+    const advance = advanceRunners(match, battingTeamId, batter.id, 4, broadcast, ruling);
+    recordPlateAppearance(match, batter, pitcher, changedPlayers, "homer", advance.runs, advance.scorers);
     afterAtBat(match, battingTeamId, state, changedPlayers, broadcast, ruling);
     return finishIfNeeded({ ...state, seed: state.seed + 1, players: changedPlayers, match: { ...match, broadcast, rulings: ruling, waitingFor: null } });
   }
@@ -355,25 +603,30 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
   const fielders = match.lineup[fieldingTeamId].map((id) => findPlayer(state, id));
   const defender = defenderFor(direction, distance, kind, fielders, pitcher);
   const quality = clamp(contactRate - contactRoll + 50, 0, 100);
-  const fieldRate = fieldingRate(kind, defender, adjustedBatter, pitcher, distance, quality, direction);
+  const fielding = fieldingRate(rng, kind, defender, adjustedBatter, pitcher, distance, quality, direction);
+  const fieldRate = fielding.rate;
   const caught = rng() * 100 < fieldRate;
   const errorChance = clamp(Math.max(0, 60 - defender.fieldingStats.awareness) * 0.3 + Math.max(0, 55 - defender.fieldingStats.control) * 0.2, 0, 30);
   if (caught) {
     match.outs += 1;
     broadcast.push(log(`${kimPrefix(kimInvolved)}${batter.name}이 ${chosenPitch} ${pitchSpeedKmh}km/h를 받아친 ${direction} ${kind}. ${defender.name}이 침착하게 처리합니다. 아웃입니다.`));
-    ruling.push(log(`${kimPrefix(kimInvolved)}수비 성공: 구속=${pitchSpeedKmh}km/h, 담당=${defender.name}, 성공률=${fieldRate.toFixed(1)}%, 타구품질=${quality.toFixed(1)}, 비거리=${distance.toFixed(1)}m.`));
+    ruling.push(log(`${kimPrefix(kimInvolved)}수비 성공: 구속=${pitchSpeedKmh}km/h, 담당=${defender.name}, 기본=${fielding.base.toFixed(1)}, 수비점수=${fielding.score.toFixed(1)}, 난이도=${fielding.difficulty.toFixed(1)}, 성공률=${fieldRate.toFixed(1)}%, 타구품질=${quality.toFixed(1)}, 비거리=${distance.toFixed(1)}m.`));
     recordPlay({ batterId: batter.id, pitcherId: pitcher.id, pitch: chosenPitch, direction, distance, kind, result: "아웃", defenderId: defender.id, kimInvolved });
+    const advance = advanceOnCaughtOut(match, battingTeamId, changedPlayers, defender, distance, kind, rng, broadcast, ruling);
+    recordPlateAppearance(match, batter, pitcher, changedPlayers, advance.runs > 0 ? "sacFly" : "out", advance.runs, advance.scorers);
   } else if (rng() * 100 < errorChance) {
     broadcast.push(log(`${kimPrefix(kimInvolved)}${chosenPitch} ${pitchSpeedKmh}km/h 타구를 ${defender.name}이 놓칩니다. 기록은 실책, 주자들이 움직입니다.`));
-    ruling.push(log(`${kimPrefix(kimInvolved)}수비 실패 후 실책. 구속=${pitchSpeedKmh}km/h, 실책확률=${errorChance.toFixed(1)}%, 담당=${defender.name}.`));
+    ruling.push(log(`${kimPrefix(kimInvolved)}수비 실패 후 실책. 구속=${pitchSpeedKmh}km/h, 담당=${defender.name}, 기본=${fielding.base.toFixed(1)}, 수비점수=${fielding.score.toFixed(1)}, 난이도=${fielding.difficulty.toFixed(1)}, 성공률=${fieldRate.toFixed(1)}%, 실책확률=${errorChance.toFixed(1)}%.`));
     recordPlay({ batterId: batter.id, pitcherId: pitcher.id, pitch: chosenPitch, direction, distance, kind, result: "실책", defenderId: defender.id, kimInvolved });
-    advanceRunners(match, battingTeamId, batter.id, 1, broadcast, ruling);
+    const advance = advanceRunners(match, battingTeamId, batter.id, 1, broadcast, ruling);
+    recordPlateAppearance(match, batter, pitcher, changedPlayers, "error", advance.runs, advance.scorers);
   } else {
-    const bases = distance >= 85 || kind === "라인드라이브" ? 2 : 1;
+    const bases = distance >= 90 || (kind === "라인드라이브" && distance >= 65) ? 2 : 1;
     broadcast.push(log(`${kimPrefix(kimInvolved)}${batter.name}이 ${chosenPitch} ${pitchSpeedKmh}km/h를 받아친 타구가 ${defender.name} 앞에 떨어집니다. ${bases === 2 ? "2루타" : "안타"}입니다.`));
-    ruling.push(log(`${kimPrefix(kimInvolved)}수비 실패: 구속=${pitchSpeedKmh}km/h, 담당=${defender.name}, 성공률=${fieldRate.toFixed(1)}%, 결과=${bases}루타.`));
+    ruling.push(log(`${kimPrefix(kimInvolved)}수비 실패: 구속=${pitchSpeedKmh}km/h, 담당=${defender.name}, 기본=${fielding.base.toFixed(1)}, 수비점수=${fielding.score.toFixed(1)}, 난이도=${fielding.difficulty.toFixed(1)}, 성공률=${fieldRate.toFixed(1)}%, 결과=${bases}루타.`));
     recordPlay({ batterId: batter.id, pitcherId: pitcher.id, pitch: chosenPitch, direction, distance, kind, result: bases === 2 ? "2루타" : "안타", defenderId: defender.id, kimInvolved });
-    advanceRunners(match, battingTeamId, batter.id, bases, broadcast, ruling);
+    const advance = advanceOnHit(match, battingTeamId, batter.id, bases, changedPlayers, defender, distance, kind, rng, broadcast, ruling);
+    recordPlateAppearance(match, batter, pitcher, changedPlayers, bases === 2 ? "double" : "single", advance.runs, advance.scorers);
   }
 
   afterAtBat(match, battingTeamId, state, changedPlayers, broadcast, ruling);
@@ -396,27 +649,37 @@ function battedBallKind(rng: () => number, batter: Player, pitcher: Player, pitc
   return "일반 타구";
 }
 
-function fieldingRate(kind: string, defender: Player, batter: Player, pitcher: Player, distance: number, quality: number, direction: string) {
+function rangedBase(rng: () => number, low: number, high: number) {
+  return low + rng() * (high - low);
+}
+
+function fieldingRate(rng: () => number, kind: string, defender: Player, batter: Player, pitcher: Player, distance: number, quality: number, direction: string) {
   if (kind === "플라이" || distance >= 50) {
     const score = defender.positionStats.jump * 0.5 + defender.fieldingStats.awareness * 0.25 + defender.fieldingStats.velocity * 0.15 + defender.fieldingStats.control * 0.1;
     const difficulty = distance * 0.5 + quality * 0.2 + (direction === "중앙" ? 5 : 8);
     const jumpBonus = defender.positionStats.jump >= 90 ? 12 : defender.positionStats.jump >= 80 ? 8 : 0;
-    return clamp(75 + score - difficulty + jumpBonus, 5, 98);
+    const base = rangedBase(rng, 55, 63);
+    return { rate: clamp(base + score - difficulty + jumpBonus, 5, 98), base, score, difficulty };
   }
   if (kind === "땅볼") {
     const score = defender.positionStats.range * 0.35 + defender.fieldingStats.awareness * 0.3 + defender.fieldingStats.control * 0.25 + defender.fieldingStats.velocity * 0.1;
     const difficulty = quality * 0.35 + batter.battingStats.speed * 0.25 + distance * 0.2;
-    return clamp(75 + score - difficulty, 5, 95);
+    const base = rangedBase(rng, 53, 60);
+    return { rate: clamp(base + score - difficulty, 5, 95), base, score, difficulty };
   }
   if (distance < 20) {
     const isCatcher = defender.primaryPosition === "포수" || defender.positions.includes("포수");
     const score = isCatcher
       ? defender.fieldingStats.awareness * 0.45 + defender.fieldingStats.control * 0.3 + defender.fieldingStats.velocity * 0.25
       : pitcher.fieldingStats.awareness * 0.45 + pitcher.fieldingStats.control * 0.35 + pitcher.fieldingStats.velocity * 0.2;
-    return clamp(80 + score - (distance * 0.5 + batter.battingStats.speed * 0.25 + quality * 0.2), 5, 95);
+    const difficulty = distance * 0.5 + batter.battingStats.speed * 0.25 + quality * 0.2;
+    const base = rangedBase(rng, 59, 64);
+    return { rate: clamp(base + score - difficulty, 5, 95), base, score, difficulty };
   }
   const score = defender.fieldingStats.awareness * 0.45 + Math.max(defender.positionStats.range, defender.positionStats.jump) * 0.25 + defender.fieldingStats.velocity * 0.15 + defender.fieldingStats.control * 0.15;
-  return clamp(70 + score - quality * 0.7, 5, 95);
+  const difficulty = quality * 0.7;
+  const base = rangedBase(rng, 53, 63);
+  return { rate: clamp(base + score - difficulty, 5, 95), base, score, difficulty };
 }
 
 function afterAtBat(match: MatchState, battingTeamId: number, state?: AppState, players?: Player[], broadcast?: LogLine[], ruling?: LogLine[]) {
@@ -516,6 +779,8 @@ function finishIfNeeded(state: AppState): AppState {
 function applyPostGame(state: AppState): AppState {
   const match = state.match!;
   const playerTeam = state.teams.find((team) => team.isPlayer)!;
+  const homeTeam = state.teams.find((team) => team.id === match.homeTeamId)!;
+  const awayTeam = state.teams.find((team) => team.id === match.awayTeamId)!;
   const homeScore = match.score[match.homeTeamId] ?? 0;
   const awayScore = match.score[match.awayTeamId] ?? 0;
   const playerScore = match.homeTeamId === playerTeam.id ? homeScore : awayScore;
@@ -575,8 +840,27 @@ function applyPostGame(state: AppState): AppState {
     coldGame: match.coldGame,
     changes
   };
+  const result = postGame.result;
+  const record: GameAnalysisRecord = {
+    id: `game-${state.dayIndex}-${state.gamesPlayed}-${state.seed}`,
+    week: Math.floor(state.dayIndex / 7) + 1,
+    dayIndex: state.dayIndex,
+    label: `${Math.floor(state.dayIndex / 7) + 1}주차 ${state.gamesPlayed + 1}경기`,
+    homeTeamId: match.homeTeamId,
+    awayTeamId: match.awayTeamId,
+    homeTeamName: homeTeam.name,
+    awayTeamName: awayTeam.name,
+    homeScore,
+    awayScore,
+    result,
+    coldGame: match.coldGame,
+    inningRuns: match.inningRuns ?? {},
+    playerStats: match.playerGameStats ?? {},
+    broadcast: match.broadcast.map((item) => item.text),
+    rulings: match.rulings.map((item) => item.text)
+  };
   const weekdayNightGame = state.dayIndex % 7 === 3 || state.dayIndex % 7 === 4;
-  return { ...state, phase: "postGame", teams, players, gamesPlayed: state.gamesPlayed + 1, postGame, restBonus: 0, nightAction: weekdayNightGame ? "game" : state.nightAction, nightConditionSettled: weekdayNightGame };
+  return { ...state, phase: "postGame", teams, players, gamesPlayed: state.gamesPlayed + 1, postGame, gameRecords: [record, ...(state.gameRecords ?? [])].slice(0, 60), restBonus: 0, nightAction: weekdayNightGame ? "game" : state.nightAction, nightConditionSettled: weekdayNightGame };
 }
 
 export function validateEntry(state: AppState) {

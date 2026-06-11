@@ -7,8 +7,8 @@ from django.contrib.auth.hashers import check_password, make_password
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .demo_data import create_demo_league, seed_skill_tables
-from .models import BattingStrategy, DemoAccount, GameRecord, GameSnapshot, PitchType, Player, SeasonRule, Team
+from .demo_data import create_demo_league, player_from_master, seed_master_players, seed_skill_tables
+from .models import BattingStrategy, DemoAccount, GameRecord, GameSnapshot, MasterPlayer, PitchType, Player, SeasonRule, Team
 
 
 PLAYER_TEAM_NAME = "복사골 피치브라더스"
@@ -47,9 +47,11 @@ def ensure_player_team_name():
 
 def ensure_global_config():
     if SeasonRule.objects.count() == 0:
-        SeasonRule.objects.create(name="Tech Demo 0.0.1")
+        SeasonRule.objects.create(name="Tech Demo 0.0.2")
     if PitchType.objects.count() == 0 or BattingStrategy.objects.count() == 0:
         seed_skill_tables()
+    if MasterPlayer.objects.count() == 0 or MasterPlayer.objects.filter(acquisition="recruit", is_active=True).count() < 100:
+        seed_master_players()
 
 
 def ensure_account_league(account):
@@ -106,6 +108,39 @@ def serialize_player(player):
         "consideringLeave": player.considering_leave,
         "injured": player.injured,
         "meta": player.meta,
+    }
+
+
+def serialize_master_player(player):
+    return {
+        "id": player.id,
+        "masterCode": player.code,
+        "teamId": None,
+        "number": player.number,
+        "name": player.name,
+        "age": player.age,
+        "job": player.job,
+        "battingRole": player.batting_role,
+        "positions": player.positions,
+        "primaryPosition": player.primary_position,
+        "battingStats": player.batting_stats,
+        "fieldingStats": player.fielding_stats,
+        "positionStats": player.position_stats,
+        "pitches": player.pitches,
+        "battingStrategies": player.batting_strategies,
+        "maxStamina": player.max_stamina,
+        "stamina": player.max_stamina,
+        "condition": player.condition,
+        "attendance": player.attendance,
+        "duesTrait": player.dues_trait,
+        "sponsorTrait": player.sponsor_trait,
+        "traits": player.traits,
+        "recentGames": [],
+        "consecutiveStarts": 0,
+        "missedGames": 0,
+        "consideringLeave": False,
+        "injured": False,
+        "meta": {**player.meta, "masterCode": player.code, "acquisition": player.acquisition},
     }
 
 
@@ -248,3 +283,35 @@ def snapshot(request):
         defaults={"state": payload(request).get("state", {})},
     )
     return JsonResponse({"ok": True, "updatedAt": snap.updated_at.isoformat()})
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def recruit_candidates(request):
+    account = account_from_request(request)
+    if not account:
+        return JsonResponse({"error": "로그인이 필요합니다."}, status=401)
+    ensure_account_league(account)
+    player_team = Team.objects.filter(account=account, is_player=True).first()
+    if not player_team:
+        return JsonResponse({"error": "플레이어 팀이 없습니다."}, status=400)
+    owned_codes = set(
+        Player.objects.filter(account=account)
+        .exclude(meta__masterCode__isnull=True)
+        .values_list("meta__masterCode", flat=True)
+    )
+    if request.method == "GET":
+        candidates = MasterPlayer.objects.filter(acquisition="recruit", is_active=True).exclude(code__in=owned_codes).order_by("id")
+        return JsonResponse({"candidates": [serialize_master_player(player) for player in candidates]})
+
+    body = payload(request)
+    code = str(body.get("masterCode", "")).strip()
+    master = MasterPlayer.objects.filter(code=code, acquisition="recruit", is_active=True).first()
+    if not master:
+        return JsonResponse({"error": "영입 후보를 찾을 수 없습니다."}, status=404)
+    if master.code in owned_codes:
+        return JsonResponse({"error": "이미 보유한 선수입니다."}, status=409)
+    next_number = max(Player.objects.filter(team=player_team).values_list("number", flat=True), default=0) + 1
+    player = player_from_master(master, account, player_team, number=next_number)
+    GameSnapshot.objects.filter(key=snapshot_key(account)).delete()
+    return JsonResponse({"player": serialize_player(player)})

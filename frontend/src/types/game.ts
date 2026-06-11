@@ -1,5 +1,5 @@
 export type Position = "투수" | "포수" | "내야수" | "외야수" | "유틸" | "지명타자" | "1루수" | "2루수" | "3루수" | "유격수" | "좌익수" | "중견수" | "우익수";
-export type Phase = "loading" | "dashboard" | "miniGame" | "evening" | "teamManagement" | "roster" | "preGame" | "game" | "postGame" | "gameOver" | "seasonEnd";
+export type Phase = "loading" | "dashboard" | "miniGame" | "evening" | "teamManagement" | "roster" | "preGame" | "game" | "postGame" | "analytics" | "gameOver" | "seasonEnd";
 export type KimRole = "지명타자" | "야수" | "루수" | "포수" | "선발투수" | "구원투수" | "마무리투수" | "투타 겸업" | "벤치" | "결장";
 
 export interface PitchDefinition {
@@ -111,6 +111,8 @@ export interface MatchState {
   count: { balls: number; strikes: number };
   broadcast: LogLine[];
   rulings: LogLine[];
+  inningRuns?: Record<number, number[]>;
+  playerGameStats?: Record<number, PlayerGameStats>;
   waitingFor: null | "kimBat" | "kimPitch";
   waitingBatterId?: number;
   waitingPitcherId?: number;
@@ -132,6 +134,57 @@ export interface MatchState {
     count: { balls: number; strikes: number };
     isAtBatOver: boolean;
   };
+}
+
+export interface PlayerGameStats {
+  playerId: number;
+  teamId: number;
+  name: string;
+  batting: {
+    pa: number;
+    ab: number;
+    hits: number;
+    doubles: number;
+    triples: number;
+    hr: number;
+    bb: number;
+    hbp: number;
+    rbi: number;
+    runs: number;
+    so: number;
+    sf: number;
+    roe: number;
+  };
+  pitching: {
+    outs: number;
+    bf: number;
+    hits: number;
+    runs: number;
+    earnedRuns: number;
+    bb: number;
+    hbp: number;
+    so: number;
+    hr: number;
+  };
+}
+
+export interface GameAnalysisRecord {
+  id: string;
+  week: number;
+  dayIndex: number;
+  label: string;
+  homeTeamId: number;
+  awayTeamId: number;
+  homeTeamName: string;
+  awayTeamName: string;
+  homeScore: number;
+  awayScore: number;
+  result: PostGameSummary["result"];
+  coldGame: boolean;
+  inningRuns: Record<number, number[]>;
+  playerStats: Record<number, PlayerGameStats>;
+  broadcast: string[];
+  rulings: string[];
 }
 
 export interface PostGameSummary {
@@ -180,6 +233,7 @@ export interface AppState {
   currentOpponentId?: number;
   match?: MatchState;
   postGame?: PostGameSummary;
+  gameRecords?: GameAnalysisRecord[];
   activityLog: string[];
   financeEvents?: FinanceEvent[];
   dailyAbsences?: DailyAbsence[];

@@ -126,6 +126,38 @@ class BattingStrategy(models.Model):
         return self.label
 
 
+class MasterPlayer(models.Model):
+    code = models.CharField(max_length=60, unique=True)
+    name = models.CharField(max_length=80)
+    team_name = models.CharField(max_length=80, blank=True)
+    number = models.IntegerField()
+    age = models.IntegerField()
+    job = models.CharField(max_length=40)
+    batting_role = models.CharField(max_length=40)
+    positions = models.JSONField(default=list)
+    primary_position = models.CharField(max_length=30)
+    batting_stats = models.JSONField(default=dict)
+    fielding_stats = models.JSONField(default=dict)
+    position_stats = models.JSONField(default=dict)
+    pitches = models.JSONField(default=list, blank=True)
+    batting_strategies = models.JSONField(default=list, blank=True)
+    max_stamina = models.IntegerField()
+    condition = models.IntegerField(default=70)
+    attendance = models.IntegerField()
+    dues_trait = models.IntegerField()
+    sponsor_trait = models.IntegerField()
+    traits = models.JSONField(default=list, blank=True)
+    acquisition = models.CharField(max_length=30, default="initial")
+    is_active = models.BooleanField(default=True)
+    meta = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.code} {self.name}"
+
+
 class GameSnapshot(models.Model):
     key = models.CharField(max_length=40, unique=True, default="default")
     state = models.JSONField(default=dict)

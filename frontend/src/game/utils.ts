@@ -120,7 +120,7 @@ export function playerOvr(player: Player, role: Position = player.primaryPositio
   const bat = player.battingStats;
   const field = player.fieldingStats;
   const pos = player.positionStats;
-  if (role === "투수") return field.control * 0.3 + field.velocity * 0.25 + pos.stuff * 0.3 + field.awareness * 0.15;
+  if (role === "투수") return field.control * 0.35 + field.velocity * 0.15 + pos.stuff * 0.3 + field.awareness * 0.2;
   if (role === "포수") return field.awareness * 0.3 + field.control * 0.25 + field.velocity * 0.2 + bat.contact * 0.15 + bat.discipline * 0.1;
   if (role === "내야수" || role === "1루수" || role === "2루수" || role === "3루수" || role === "유격수") {
     return pos.range * 0.25 + field.control * 0.2 + field.awareness * 0.2 + bat.contact * 0.2 + bat.speed * 0.15;

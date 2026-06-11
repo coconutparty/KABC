@@ -69,3 +69,21 @@ export async function resetBackend(account: DemoAccount): Promise<ApiState> {
   if (!response.ok) throw new Error("리셋 실패");
   return response.json();
 }
+
+export async function fetchRecruitCandidates(account: DemoAccount): Promise<Player[]> {
+  const response = await fetch(apiUrl("/api/recruits/"), { headers: authHeaders(account) });
+  if (!response.ok) throw new Error("영입 후보를 불러오지 못했습니다.");
+  const payload = await response.json();
+  return payload.candidates ?? [];
+}
+
+export async function recruitMasterPlayer(account: DemoAccount, masterCode: string): Promise<Player> {
+  const response = await fetch(apiUrl("/api/recruits/"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders(account) },
+    body: JSON.stringify({ masterCode })
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error ?? "선수 영입 실패");
+  return payload.player;
+}

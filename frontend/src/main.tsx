@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
-import type { AppState, DailyAbsence, FinanceEvent, KimRole, MatchState, PendingSubstitution, Player, Team } from "./types/game";
-import { fetchInitialData, fetchSnapshot, loginAccount, registerAccount, resetBackend, saveSnapshot, type DemoAccount } from "./game/api";
+import type { AppState, DailyAbsence, FinanceEvent, GameAnalysisRecord, KimRole, MatchState, PendingSubstitution, Player, PlayerGameStats, Team } from "./types/game";
+import { fetchInitialData, fetchRecruitCandidates, fetchSnapshot, loginAccount, recruitMasterPlayer, registerAccount, resetBackend, saveSnapshot, type DemoAccount } from "./game/api";
 import { BAT_STRATEGY_TABLE, DEFAULT_BATTING_STRATEGIES, PARTY_OPTIONS, PITCH_TABLE } from "./game/config";
 import { createMatch, simulateStep, validateEntry } from "./game/matchEngine";
 import { dayName, gameLabel, hasDayMiniGame, isGameDay, isWeekend, nextScheduleText, weekNumber } from "./game/schedule";
@@ -13,7 +13,7 @@ const KIM_NAME = "김철민";
 const KIM_JOB = "청마루 감자탕 후계자";
 const PLAYER_TEAM_NAME = "복사골 피치브라더스";
 const ACCOUNT_KEY = "kabc-demo-account";
-const DATA_OWNERSHIP_VERSION = 2;
+const DATA_OWNERSHIP_VERSION = 3;
 const KIM_ROLES: KimRole[] = ["지명타자", "야수", "루수", "포수", "선발투수", "구원투수", "마무리투수", "투타 겸업", "벤치", "결장"];
 type BattingStrategyChoice = (typeof BAT_STRATEGY_TABLE)[string];
 
@@ -67,7 +67,8 @@ function normalizeLoadedState(state: AppState, data: Awaited<ReturnType<typeof f
     nightAction: state.nightAction ?? "none",
     nightTrainingCount: state.nightTrainingCount ?? 0,
     nightConditionPenalty: state.nightConditionPenalty ?? 0,
-    nightConditionSettled: state.nightConditionSettled ?? false
+    nightConditionSettled: state.nightConditionSettled ?? false,
+    gameRecords: state.gameRecords ?? []
   };
 }
 
@@ -93,8 +94,9 @@ function makeInitialState(data: Awaited<ReturnType<typeof fetchInitialData>>): A
     selectedPitcherId: kim?.id,
     selectedDh: false,
     currentOpponentId: data.teams.find((team) => !team.isPlayer)?.id,
-    activityLog: ["Tech Demo 0.0.1 데이터 로드 완료"],
+    activityLog: ["Tech Demo 0.0.2 데이터 로드 완료"],
     financeEvents: [],
+    gameRecords: [],
     dailyAbsences: [],
     eveningHours: 6,
     restBonus: 0,
@@ -107,7 +109,7 @@ function makeInitialState(data: Awaited<ReturnType<typeof fetchInitialData>>): A
 }
 
 function App() {
-  const [state, setState] = useState<AppState>({ phase: "loading", dataOwnershipVersion: DATA_OWNERSHIP_VERSION, seed: 0, dayIndex: 0, gamesPlayed: 0, teams: [], players: [], seasonRule: DEFAULT_RULE, pitchTable: PITCH_TABLE, battingStrategyTable: BAT_STRATEGY_TABLE, kimRole: "투타 겸업", selectedEntry: [], selectedDh: false, activityLog: [], financeEvents: [], dailyAbsences: [], eveningHours: 6, restBonus: 0, nightAction: "none", nightTrainingCount: 0, nightConditionPenalty: 0, nightConditionSettled: false, dayClicks: 0 });
+  const [state, setState] = useState<AppState>({ phase: "loading", dataOwnershipVersion: DATA_OWNERSHIP_VERSION, seed: 0, dayIndex: 0, gamesPlayed: 0, teams: [], players: [], seasonRule: DEFAULT_RULE, pitchTable: PITCH_TABLE, battingStrategyTable: BAT_STRATEGY_TABLE, kimRole: "투타 겸업", selectedEntry: [], selectedDh: false, activityLog: [], financeEvents: [], gameRecords: [], dailyAbsences: [], eveningHours: 6, restBonus: 0, nightAction: "none", nightTrainingCount: 0, nightConditionPenalty: 0, nightConditionSettled: false, dayClicks: 0 });
   const [account, setAccount] = useState<DemoAccount | null>(() => loadSavedAccount());
   const playerTeam = state.teams.find((team) => team.isPlayer);
   const kim = state.players.find((player) => player.name === KIM_NAME);
@@ -200,7 +202,7 @@ function App() {
   function logout() {
     saveAccount(null);
     setAccount(null);
-    setState({ phase: "loading", dataOwnershipVersion: DATA_OWNERSHIP_VERSION, seed: 0, dayIndex: 0, gamesPlayed: 0, teams: [], players: [], seasonRule: DEFAULT_RULE, pitchTable: PITCH_TABLE, battingStrategyTable: BAT_STRATEGY_TABLE, kimRole: "투타 겸업", selectedEntry: [], selectedDh: false, activityLog: [], financeEvents: [], dailyAbsences: [], eveningHours: 6, restBonus: 0, nightAction: "none", nightTrainingCount: 0, nightConditionPenalty: 0, nightConditionSettled: false, dayClicks: 0 });
+    setState({ phase: "loading", dataOwnershipVersion: DATA_OWNERSHIP_VERSION, seed: 0, dayIndex: 0, gamesPlayed: 0, teams: [], players: [], seasonRule: DEFAULT_RULE, pitchTable: PITCH_TABLE, battingStrategyTable: BAT_STRATEGY_TABLE, kimRole: "투타 겸업", selectedEntry: [], selectedDh: false, activityLog: [], financeEvents: [], gameRecords: [], dailyAbsences: [], eveningHours: 6, restBonus: 0, nightAction: "none", nightTrainingCount: 0, nightConditionPenalty: 0, nightConditionSettled: false, dayClicks: 0 });
   }
 
   if (!account) return <IndexScreen onEnter={enterAccount} />;
@@ -211,7 +213,7 @@ function App() {
     <>
       <button onClick={() => update((s) => ({ ...s, phase: "dashboard" }))}>본부</button>
       <button onClick={() => update((s) => ({ ...s, phase: "roster" }))}>선수단</button>
-      <button onClick={() => update((s) => ({ ...s, phase: "preGame" }))}>경기</button>
+      <button onClick={() => update((s) => ({ ...s, phase: "analytics" }))}>기록실</button>
     </>
   );
   const userActions = (
@@ -222,15 +224,16 @@ function App() {
 
   return (
     <Shell state={state} userName={account.username} mainActions={mainActions} userActions={userActions}>
-      {showWednesdayOps && <TeamManagement state={state} setState={update} finishDay={() => update(finishDay)} />}
+      {showWednesdayOps && <TeamManagement account={account} state={state} setState={update} finishDay={() => update(finishDay)} />}
       {state.phase === "dashboard" && !showWednesdayOps && <Dashboard state={state} onNext={startNext} />}
       {state.phase === "miniGame" && <MiniGame state={state} onFinish={afterDayWork} />}
       {state.phase === "evening" && <Evening state={state} setState={update} finishDay={() => update(finishDay)} />}
       {state.phase === "roster" && <Roster state={state} />}
-      {state.phase === "teamManagement" && <TeamManagement state={state} setState={update} finishDay={() => update(finishDay)} />}
+      {state.phase === "teamManagement" && <TeamManagement account={account} state={state} setState={update} finishDay={() => update(finishDay)} />}
       {state.phase === "preGame" && <PreGame state={state} setState={update} onBegin={beginGame} />}
       {state.phase === "game" && <GameView state={state} setState={update} />}
       {state.phase === "postGame" && <PostGame state={state} onNext={nextFromPostGame} />}
+      {state.phase === "analytics" && <AnalyticsRoom state={state} />}
       {state.phase === "seasonEnd" && <SeasonEnd state={state} onRestart={restart} />}
       {state.phase === "gameOver" && <GameOver reason={state.gameOverReason ?? "게임오버"} onRestart={restart} />}
     </Shell>
@@ -310,7 +313,7 @@ function IndexScreen({ onEnter }: { onEnter: (account: DemoAccount) => void }) {
       <section className="indexHero">
         <IndexDecor />
         <div className="indexTitle">
-          <span>Tech Demo 0.0.1</span>
+          <span>Tech Demo 0.0.2</span>
           <h1>KABC: 퇴근 후 플레이볼</h1>
           <p>복사골 피치브라더스를 이끌고 퇴근 후 주간 일정, 팀 운영, 7이닝 사회인 야구 경기를 검증하는 플레이 로직 중심 테크데모입니다.</p>
         </div>
@@ -470,11 +473,12 @@ function finishSeason(state: AppState): AppState {
 
 function Shell({ state, children, userName, mainActions, userActions }: { state: AppState; children: React.ReactNode; userName?: string; mainActions?: React.ReactNode; userActions?: React.ReactNode }) {
   const team = state.teams.find((item) => item.isPlayer);
+  const showHeader = state.phase !== "game";
   return (
     <main className="app">
-      <header className="dugoutHeader">
+      {showHeader && <header className="dugoutHeader">
         <div className="brandLockup">
-          <span>Tech Demo 0.0.1</span>
+          <span>Tech Demo 0.0.2</span>
           <h1>KABC: 퇴근 후 플레이볼</h1>
           <p>{weekNumber(state.dayIndex)}주차 {dayName(state.dayIndex)}요일 · {nextScheduleText(state.dayIndex)}</p>
         </div>
@@ -489,7 +493,7 @@ function Shell({ state, children, userName, mainActions, userActions }: { state:
           {userName && <div className="hudUser"><span>USER</span><strong>{userName}</strong></div>}
           {userActions && <div className="hudActions">{userActions}</div>}
         </div>}
-      </header>
+      </header>}
       <DateCurtain state={state} />
       <FinanceCurtain state={state} />
       {children}
@@ -607,7 +611,7 @@ function Evening({ state, setState, finishDay }: { state: AppState; setState: (f
     setState((current) => {
       if (current.eveningHours < 2) return current;
       const rng = createRng(current.seed + current.activityLog.length);
-      const success = rng() < 0.2;
+      const success = rng() < 0.5;
       const players = current.players.map((player) => {
         if (player.id !== kim.id) return player;
         const next = structuredClone(player) as Player;
@@ -643,7 +647,7 @@ function Evening({ state, setState, finishDay }: { state: AppState; setState: (f
       <Panel title="퇴근 후 6시간">
         <Metric label="남은 시간" value={`${state.eveningHours}시간`} />
         <div className="buttonGrid">
-          {stats.map(([label, key]) => <button key={key} disabled={state.eveningHours < 2} onClick={() => train(key)}>{label} 훈련<small>2시간 · 김철민 체력 -4 · 성공률 20%</small></button>)}
+          {stats.map(([label, key]) => <button key={key} disabled={state.eveningHours < 2} onClick={() => train(key)}>{label} 훈련<small>2시간 · 김철민 체력 -4 · 성공률 50%</small></button>)}
         </div>
         <button onClick={rest} disabled={state.eveningHours <= 0}>휴식으로 저녁 종료</button>
         {isWeekend(state.dayIndex) && <div className="partyRow">{PARTY_OPTIONS.map((option) => <button key={option.label} disabled={(state.teams.find((team) => team.isPlayer)?.funds ?? 0) < option.cost} onClick={() => party(option)}>{option.label}<small>{money(option.cost)}</small></button>)}</div>}
@@ -678,8 +682,8 @@ function PlayerCard({ player, compact = false }: { player: Player; compact?: boo
 
 function FancyPlayerCard({ player, compact = false }: { player: Player; compact?: boolean }) {
   const ovr = Math.round(playerOvr(player));
-  const tier = cardTier(ovr);
   const starCount = cardStars(ovr);
+  const tier = cardTier(starCount, player.age);
   const statRows = [
     ["컨택", player.battingStats.contact],
     ["장타", player.battingStats.power],
@@ -689,7 +693,7 @@ function FancyPlayerCard({ player, compact = false }: { player: Player; compact?
     ["구속", player.fieldingStats.velocity]
   ];
   return (
-    <article className={`fancyCard cardTier-${tier.key} ${compact ? "compact" : ""}`}>
+    <article className={`fancyCard cardTier-${tier.key} cardStars-${starCount} ${compact ? "compact" : ""}`}>
       <div className="cardChrome" aria-hidden="true" />
       <header className="cardTop">
         <div className="cardOvr"><strong>{ovr}</strong><span>OVR</span></div>
@@ -723,11 +727,12 @@ function FancyPlayerCard({ player, compact = false }: { player: Player; compact?
   );
 }
 
-function cardTier(ovr: number) {
-  if (ovr >= 82) return { key: "legend", label: "LEGEND" };
-  if (ovr >= 74) return { key: "star", label: "STAR" };
-  if (ovr >= 64) return { key: "gold", label: "GOLD" };
-  return { key: "rookie", label: "ROOKIE" };
+function cardTier(stars: number, age: number) {
+  if (stars <= 1) return { key: "amateur", label: "AMATEUR" };
+  if (stars === 2) return { key: "member", label: "MEMBER" };
+  if (stars === 3) return age <= 25 ? { key: "rookie", label: "ROOKIE" } : { key: "player", label: "PLAYER" };
+  if (stars === 4) return age <= 35 ? { key: "gold", label: "GOLD" } : { key: "veteran", label: "VETERAN" };
+  return age <= 35 ? { key: "star", label: "STAR" } : { key: "legend", label: "LEGEND" };
 }
 
 function cardStars(ovr: number) {
@@ -736,6 +741,31 @@ function cardStars(ovr: number) {
   if (ovr >= 66) return 3;
   if (ovr >= 56) return 2;
   return 1;
+}
+
+const RECRUIT_PROMOTION_COST = 200000;
+const RECRUIT_DRAW_WEIGHTS: Record<number, number> = { 1: 40, 2: 30, 3: 20, 4: 4, 5: 1 };
+
+function starsForPlayer(player: Player) {
+  const fixed = Number(player.meta?.stars);
+  return fixed >= 1 && fixed <= 5 ? fixed : cardStars(Math.round(playerOvr(player)));
+}
+
+function drawRecruitApplications(candidates: Player[], rng: () => number, count = 5) {
+  const picked: Player[] = [];
+  const available = [...candidates];
+  while (picked.length < count && available.length) {
+    const weighted = available.map((player) => ({ player, weight: RECRUIT_DRAW_WEIGHTS[starsForPlayer(player)] ?? 1 }));
+    const total = weighted.reduce((sum, item) => sum + item.weight, 0);
+    let roll = rng() * total;
+    const selected = weighted.find((item) => {
+      roll -= item.weight;
+      return roll <= 0;
+    }) ?? weighted[weighted.length - 1];
+    picked.push(selected.player);
+    available.splice(available.findIndex((player) => player.id === selected.player.id), 1);
+  }
+  return picked;
 }
 
 function CardStatBar({ label, value }: { label: string; value: number }) {
@@ -752,9 +782,24 @@ function Bar({ label, value, max }: { label: string; value: number; max: number 
   return <div className="bar"><span>{label} {Math.round(value)}/{max}</span><i style={{ width: `${clamp((value / max) * 100, 0, 100)}%` }} /></div>;
 }
 
-function TeamManagement({ state, setState, finishDay }: { state: AppState; setState: (fn: (s: AppState) => AppState) => void; finishDay: () => void }) {
+function TeamManagement({ account, state, setState, finishDay }: { account: DemoAccount; state: AppState; setState: (fn: (s: AppState) => AppState) => void; finishDay: () => void }) {
   const team = state.teams.find((item) => item.isPlayer)!;
-  const opponents = state.players.filter((player) => player.teamId !== team.id).sort((a, b) => tradeValue(a) - tradeValue(b)).slice(0, 8);
+  const [recruitCandidates, setRecruitCandidates] = useState<Player[]>([]);
+  const [recruitLoading, setRecruitLoading] = useState(false);
+  const [recruitError, setRecruitError] = useState("");
+  const [applications, setApplications] = useState<Player[]>([]);
+  const [selectedApplication, setSelectedApplication] = useState<Player | null>(null);
+  useEffect(() => {
+    if (state.dayIndex % 7 !== 2) return;
+    setRecruitLoading(true);
+    fetchRecruitCandidates(account)
+      .then((players) => {
+        setRecruitCandidates(players);
+        setRecruitError("");
+      })
+      .catch((error) => setRecruitError(error.message))
+      .finally(() => setRecruitLoading(false));
+  }, [account, state.dayIndex, state.players.length]);
   if (state.dayIndex % 7 !== 2) {
     return (
       <div className="grid two">
@@ -793,7 +838,40 @@ function TeamManagement({ state, setState, finishDay }: { state: AppState; setSt
       activityLog: [`수요일 ${type} 팀 훈련 완료: 3시간 소모`, ...current.activityLog]
     };
   });
-  const recruit = (target: Player) => setState((current) => ({ ...current, players: current.players.map((player) => player.id === target.id ? { ...player, teamId: team.id, number: Math.max(...current.players.filter((p) => p.teamId === team.id).map((p) => p.number)) + 1 } : player), teams: current.teams.map((item) => item.id === team.id ? { ...item, fairness: clamp(item.fairness - 1, 0, 100) } : item), activityLog: [`트레이드 제안 성사: ${target.name} 영입`, ...current.activityLog] }));
+  const startRecruitment = () => {
+    if (team.funds < RECRUIT_PROMOTION_COST || recruitCandidates.length === 0) return;
+    const rng = createRng(state.seed + state.activityLog.length + applications.length * 101 + 909);
+    const drawn = drawRecruitApplications(recruitCandidates, rng, 5);
+    setApplications(drawn);
+    setSelectedApplication(null);
+    setState((current) => {
+      const currentTeam = current.teams.find((item) => item.isPlayer);
+      if (!currentTeam || currentTeam.funds < RECRUIT_PROMOTION_COST) return current;
+      return {
+        ...current,
+        seed: current.seed + 909,
+        teams: current.teams.map((item) => item.id === currentTeam.id ? { ...item, funds: item.funds - RECRUIT_PROMOTION_COST } : item),
+        activityLog: [`선수모집 홍보 집행: ${money(RECRUIT_PROMOTION_COST)} 사용, 입단희망서 ${drawn.length}장 도착`, ...current.activityLog]
+      };
+    });
+  };
+  const recruit = (target: Player) => {
+    const masterCode = String(target.meta?.masterCode ?? "");
+    if (!masterCode) return;
+    recruitMasterPlayer(account, masterCode)
+      .then((player) => {
+        setState((current) => ({
+          ...current,
+          players: [...current.players, player],
+          teams: current.teams.map((item) => item.id === team.id ? { ...item, fairness: clamp(item.fairness - 1, 0, 100) } : item),
+          activityLog: [`선수 영입 완료: ${player.name}`, ...current.activityLog]
+        }));
+        setRecruitCandidates((players) => players.filter((item) => item.meta?.masterCode !== masterCode));
+        setApplications((players) => players.filter((item) => item.meta?.masterCode !== masterCode));
+        setSelectedApplication(null);
+      })
+      .catch((error) => setRecruitError(error.message));
+  };
   return (
     <div className="grid managementGrid">
       <Panel title="수요일 팀 훈련">
@@ -802,14 +880,57 @@ function TeamManagement({ state, setState, finishDay }: { state: AppState; setSt
           <button disabled onClick={collect}>회비/찬조 자동 정산 완료</button>
           <button disabled={state.eveningHours < 3} onClick={() => training("일반")}>일반 팀 훈련<small>3시간</small></button>
           <button disabled={state.eveningHours < 3} onClick={() => training("조직력")}>조직력 훈련<small>3시간</small></button>
-          <button onClick={() => setState((s) => ({ ...s, activityLog: ["모집원서 확인: 테크데모에서는 트레이드 후보 목록으로 대체 표시", ...s.activityLog] }))}>모집원서 확인</button>
+          <button onClick={() => setState((s) => ({ ...s, activityLog: ["모집원서 확인: 중앙 선수 데이터의 영입 후보를 표시합니다.", ...s.activityLog] }))}>모집원서 확인</button>
         </div>
         <button className="primary" onClick={finishDay}>팀 관리 종료</button>
       </Panel>
       <FinanceLedger events={state.financeEvents} />
       <LineupManager state={state} setState={setState} />
-      <Panel title="트레이드/영입 후보">
-        <div className="tradeList">{opponents.map((player) => <button key={player.id} onClick={() => recruit(player)}><span>{player.name} · {player.primaryPosition}</span><strong>{tradeValue(player).toFixed(1)}</strong></button>)}</div>
+      <Panel title="선수모집">
+        {recruitError && <p className="danger">{recruitError}</p>}
+        <div className="recruitBoard">
+          <div className="recruitBrief">
+            <Metric label="홍보비" value={money(RECRUIT_PROMOTION_COST)} />
+            <Metric label="후보 풀" value={recruitLoading ? "확인 중" : `${recruitCandidates.length}명`} />
+            <Metric label="도착 서류" value={`${applications.length}장`} />
+          </div>
+          <button className="primary recruitStart" disabled={recruitLoading || team.funds < RECRUIT_PROMOTION_COST || recruitCandidates.length === 0} onClick={startRecruitment}>
+            선수모집 홍보 집행
+            <small>1성 40 · 2성 30 · 3성 20 · 4성 4 · 5성 1 가중치</small>
+          </button>
+          {recruitLoading && <p className="next">중앙 선수 데이터를 확인하는 중입니다.</p>}
+          {!recruitLoading && recruitCandidates.length === 0 && <p className="next">현재 영입 가능한 선수가 없습니다.</p>}
+          <div className="applicationDeck">
+            {applications.length === 0 && <p className="paperEmpty">홍보를 집행하면 입단희망서 5장이 순서대로 공개됩니다.</p>}
+            {applications.map((player, index) => {
+              const stars = starsForPlayer(player);
+              return (
+                <button
+                  key={String(player.meta?.masterCode ?? player.id)}
+                  className={`applicationPaper stars-${stars}`}
+                  style={{ animationDelay: `${index * 180}ms` }}
+                  onClick={() => setSelectedApplication(player)}
+                >
+                  <span className="paperNo">NO.{String(index + 1).padStart(2, "0")}</span>
+                  <strong>{player.name}</strong>
+                  <span>{player.primaryPosition} · OVR {Math.round(playerOvr(player))}</span>
+                  <small>{"★".repeat(stars)}{"☆".repeat(5 - stars)}</small>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {selectedApplication && (
+          <div className="modalBackdrop" onClick={() => setSelectedApplication(null)}>
+            <div className="recruitModal" onClick={(event) => event.stopPropagation()}>
+              <div className="modalCardWrap"><FancyPlayerCard player={selectedApplication} /></div>
+              <div className="modalActions">
+                <button className="primary" onClick={() => recruit(selectedApplication)}>입단시킨다</button>
+                <button onClick={() => setSelectedApplication(null)}>보류한다</button>
+              </div>
+            </div>
+          </div>
+        )}
       </Panel>
     </div>
   );
@@ -1224,7 +1345,7 @@ function MatchupCards({ state, batterId, pitcherId, order }: { state: AppState; 
 
 function LiveDuelCard({ player, label, mode, effect }: { player: Player; label: string; mode: "batter" | "pitcher"; effect?: { type: "투지" | "태업"; until: number } }) {
   const ovr = Math.round(playerOvr(player));
-  const tier = cardTier(ovr);
+  const tier = cardTier(cardStars(ovr), player.age);
   const rows = liveStatRows(player, mode, effect);
   return (
     <article className={`liveDuelCard ${mode} cardTier-${tier.key}`} key={`${player.id}-${player.stamina}-${player.condition}-${effect?.type ?? "normal"}`}>
@@ -1559,6 +1680,146 @@ function shortMoney(value: number) {
   if (abs >= 100000000) return `${(value / 100000000).toFixed(abs >= 1000000000 ? 1 : 2).replace(/\.0+$/, "")}억`;
   if (abs >= 10000) return `${Math.round(value / 10000).toLocaleString("ko-KR")}만원`;
   return money(value);
+}
+
+function fixed3(value: number) {
+  if (!Number.isFinite(value)) return ".000";
+  return value.toFixed(3).replace(/^0/, "");
+}
+
+function inningsText(outs: number) {
+  return `${Math.floor(outs / 3)}.${outs % 3}`;
+}
+
+function battingLine(stats: PlayerGameStats["batting"]) {
+  const avg = stats.ab ? stats.hits / stats.ab : 0;
+  const obpDen = stats.ab + stats.bb + stats.hbp + stats.sf;
+  const obp = obpDen ? (stats.hits + stats.bb + stats.hbp) / obpDen : 0;
+  const singles = stats.hits - stats.doubles - stats.triples - stats.hr;
+  const tb = singles + stats.doubles * 2 + stats.triples * 3 + stats.hr * 4;
+  const slg = stats.ab ? tb / stats.ab : 0;
+  return { avg, obp, slg, ops: obp + slg };
+}
+
+function pitchingLine(stats: PlayerGameStats["pitching"]) {
+  const innings = stats.outs / 3;
+  return {
+    era: stats.outs ? stats.earnedRuns * 7 / innings : 0,
+    whip: stats.outs ? (stats.bb + stats.hits) / innings : 0
+  };
+}
+
+function emptyPlayerStats(source: PlayerGameStats): PlayerGameStats {
+  return {
+    playerId: source.playerId,
+    teamId: source.teamId,
+    name: source.name,
+    batting: { pa: 0, ab: 0, hits: 0, doubles: 0, triples: 0, hr: 0, bb: 0, hbp: 0, rbi: 0, runs: 0, so: 0, sf: 0, roe: 0 },
+    pitching: { outs: 0, bf: 0, hits: 0, runs: 0, earnedRuns: 0, bb: 0, hbp: 0, so: 0, hr: 0 }
+  };
+}
+
+function aggregateSeason(records: GameAnalysisRecord[]) {
+  const map = new Map<number, PlayerGameStats>();
+  for (const record of records) {
+    for (const stat of Object.values(record.playerStats)) {
+      const row = map.get(stat.playerId) ?? emptyPlayerStats(stat);
+      for (const key of Object.keys(row.batting) as Array<keyof PlayerGameStats["batting"]>) row.batting[key] += stat.batting[key] ?? 0;
+      for (const key of Object.keys(row.pitching) as Array<keyof PlayerGameStats["pitching"]>) row.pitching[key] += stat.pitching[key] ?? 0;
+      map.set(stat.playerId, row);
+    }
+  }
+  return [...map.values()];
+}
+
+function inningScore(record: GameAnalysisRecord, teamId: number) {
+  const runs = record.inningRuns[teamId] ?? [];
+  return Array.from({ length: 7 }, (_, index) => runs[index] ?? 0);
+}
+
+function AnalyticsRoom({ state }: { state: AppState }) {
+  const records = state.gameRecords ?? [];
+  const [selectedId, setSelectedId] = useState(records[0]?.id ?? "");
+  const selected = records.find((record) => record.id === selectedId) ?? records[0];
+  const seasonRows = aggregateSeason(records);
+  const batters = seasonRows.filter((row) => row.batting.pa > 0).sort((a, b) => b.batting.pa - a.batting.pa || battingLine(b.batting).ops - battingLine(a.batting).ops);
+  const pitchers = seasonRows.filter((row) => row.pitching.bf > 0).sort((a, b) => b.pitching.outs - a.pitching.outs || pitchingLine(a.pitching).era - pitchingLine(b.pitching).era);
+  const gameStats = selected ? Object.values(selected.playerStats) : [];
+  const gameBatters = gameStats.filter((row) => row.batting.pa > 0).sort((a, b) => a.teamId - b.teamId || b.batting.pa - a.batting.pa);
+  const gamePitchers = gameStats.filter((row) => row.pitching.bf > 0).sort((a, b) => a.teamId - b.teamId || b.pitching.outs - a.pitching.outs);
+
+  if (!records.length) {
+    return <Panel title="기록분석실" wide><p className="next">종료된 경기가 없습니다. 경기를 완료하면 박스스코어, 선수 기록, 중계/판정 로그가 이곳에 보관됩니다.</p></Panel>;
+  }
+
+  return (
+    <div className="analyticsRoom">
+      <Panel title="기록분석실" wide>
+        <div className="recordSelector">
+          {records.map((record) => (
+            <button key={record.id} className={selected?.id === record.id ? "selected" : ""} onClick={() => setSelectedId(record.id)}>
+              <span>{record.label}</span>
+              <strong>{record.awayTeamName} {record.awayScore} : {record.homeScore} {record.homeTeamName}</strong>
+            </button>
+          ))}
+        </div>
+      </Panel>
+      {selected && (
+        <>
+          <Panel title="경기 박스스코어" wide>
+            <div className="boxScore">
+              <div className="boxRow head"><span>팀</span>{Array.from({ length: 7 }, (_, i) => <b key={i}>{i + 1}</b>)}<strong>R</strong></div>
+              <div className="boxRow"><span>{selected.awayTeamName}</span>{inningScore(selected, selected.awayTeamId).map((run, i) => <b key={i}>{run}</b>)}<strong>{selected.awayScore}</strong></div>
+              <div className="boxRow"><span>{selected.homeTeamName}</span>{inningScore(selected, selected.homeTeamId).map((run, i) => <b key={i}>{run}</b>)}<strong>{selected.homeScore}</strong></div>
+            </div>
+            <p className="next">{selected.result}{selected.coldGame ? " · 콜드게임" : ""}</p>
+          </Panel>
+          <Panel title="지난 경기 타자 기록" wide>
+            <div className="statTable">
+              <div className="statHead"><span>선수</span><span>PA</span><span>AB</span><span>H</span><span>2B</span><span>HR</span><span>BB</span><span>RBI</span><span>R</span><span>AVG</span><span>OBP</span></div>
+              {gameBatters.map((row) => {
+                const line = battingLine(row.batting);
+                return <div className="statRow" key={`gb-${row.playerId}`}><span>{row.name}</span><span>{row.batting.pa}</span><span>{row.batting.ab}</span><span>{row.batting.hits}</span><span>{row.batting.doubles}</span><span>{row.batting.hr}</span><span>{row.batting.bb}</span><span>{row.batting.rbi}</span><span>{row.batting.runs}</span><span>{fixed3(line.avg)}</span><span>{fixed3(line.obp)}</span></div>;
+              })}
+            </div>
+          </Panel>
+          <Panel title="지난 경기 투수 기록" wide>
+            <div className="statTable pitcherStats">
+              <div className="statHead"><span>투수</span><span>IP</span><span>BF</span><span>H</span><span>R</span><span>ER</span><span>BB</span><span>HBP</span><span>K</span><span>HR</span><span>ERA</span><span>WHIP</span></div>
+              {gamePitchers.map((row) => {
+                const line = pitchingLine(row.pitching);
+                return <div className="statRow" key={`gp-${row.playerId}`}><span>{row.name}</span><span>{inningsText(row.pitching.outs)}</span><span>{row.pitching.bf}</span><span>{row.pitching.hits}</span><span>{row.pitching.runs}</span><span>{row.pitching.earnedRuns}</span><span>{row.pitching.bb}</span><span>{row.pitching.hbp}</span><span>{row.pitching.so}</span><span>{row.pitching.hr}</span><span>{line.era.toFixed(2)}</span><span>{line.whip.toFixed(2)}</span></div>;
+              })}
+            </div>
+          </Panel>
+          <Panel title="시즌 타격 누적" wide>
+            <div className="statTable">
+              <div className="statHead"><span>선수</span><span>PA</span><span>AB</span><span>H</span><span>2B</span><span>HR</span><span>BB</span><span>RBI</span><span>R</span><span>AVG</span><span>OBP</span><span>OPS</span></div>
+              {batters.map((row) => {
+                const line = battingLine(row.batting);
+                return <div className="statRow" key={`sb-${row.playerId}`}><span>{row.name}</span><span>{row.batting.pa}</span><span>{row.batting.ab}</span><span>{row.batting.hits}</span><span>{row.batting.doubles}</span><span>{row.batting.hr}</span><span>{row.batting.bb}</span><span>{row.batting.rbi}</span><span>{row.batting.runs}</span><span>{fixed3(line.avg)}</span><span>{fixed3(line.obp)}</span><span>{fixed3(line.ops)}</span></div>;
+              })}
+            </div>
+          </Panel>
+          <Panel title="시즌 투수 누적" wide>
+            <div className="statTable pitcherStats">
+              <div className="statHead"><span>투수</span><span>IP</span><span>BF</span><span>H</span><span>R</span><span>ER</span><span>BB</span><span>HBP</span><span>K</span><span>HR</span><span>ERA</span><span>WHIP</span></div>
+              {pitchers.map((row) => {
+                const line = pitchingLine(row.pitching);
+                return <div className="statRow" key={`sp-${row.playerId}`}><span>{row.name}</span><span>{inningsText(row.pitching.outs)}</span><span>{row.pitching.bf}</span><span>{row.pitching.hits}</span><span>{row.pitching.runs}</span><span>{row.pitching.earnedRuns}</span><span>{row.pitching.bb}</span><span>{row.pitching.hbp}</span><span>{row.pitching.so}</span><span>{row.pitching.hr}</span><span>{line.era.toFixed(2)}</span><span>{line.whip.toFixed(2)}</span></div>;
+              })}
+            </div>
+          </Panel>
+          <Panel title="경기 로그 다시보기" wide>
+            <div className="logReplayGrid">
+              <div><h3>중계 로그</h3><LogList rows={selected.broadcast.slice().reverse()} /></div>
+              <div><h3>판정 로그</h3><LogList rows={selected.rulings.slice().reverse()} /></div>
+            </div>
+          </Panel>
+        </>
+      )}
+    </div>
+  );
 }
 
 function PostGame({ state, onNext }: { state: AppState; onNext: () => void }) {
