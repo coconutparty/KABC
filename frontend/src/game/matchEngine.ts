@@ -528,8 +528,8 @@ export function simulateStep(state: AppState, kimBatChoice?: string, kimPitch?: 
     return returnPitchState(state, match, changedPlayers, broadcast, ruling);
   }
 
-  const stuffPenalty = Math.max(0, effectiveStat(pitcher, pitcher.positionStats.stuff, pitcherEffect) - 60) * 0.3;
-  const speedPenalty = Math.max(0, speedValue - 140) * 0.15;
+  const stuffPenalty = Math.max(0, effectiveStat(pitcher, pitcher.positionStats.stuff, pitcherEffect) - 65) * 0.22;
+  const speedPenalty = Math.max(0, speedValue - 145) * 0.1;
   const badPitchSwingPenalty = control === "danger" ? -18 : control === "ball" ? -12 : 0;
   const contact = effectiveStat(batter, batter.battingStats.contact, batterEffect) * batChoice.contact + pitch.contactMod - stuffPenalty - speedPenalty + badPitchSwingPenalty + (control === "mistake" ? 10 : 0);
   const contactRate = clamp(contact, 5, 95);
@@ -641,7 +641,7 @@ function battedBallKind(rng: () => number, batter: Player, pitcher: Player, pitc
   const contact = effectiveStat(batter, batter.battingStats.contact, batterEffect);
   const ground = clamp(8 + Math.max(0, stuff - power) * 0.35 + (groundMod[pitchName] ?? 0), 3, 28);
   const fly = clamp(8 + Math.max(0, power - stuff) * 0.3 + (flyMod[pitchName] ?? 0), 3, 25);
-  const line = clamp(10 + Math.max(0, contact - stuff) * 0.15, 5, 20);
+  const line = clamp(12 + Math.max(0, contact - stuff) * 0.18, 6, 24);
   const roll = rng() * 100;
   if (roll < ground) return "땅볼";
   if (roll < ground + fly) return "플라이";
@@ -658,13 +658,13 @@ function fieldingRate(rng: () => number, kind: string, defender: Player, batter:
     const score = defender.positionStats.jump * 0.5 + defender.fieldingStats.awareness * 0.25 + defender.fieldingStats.velocity * 0.15 + defender.fieldingStats.control * 0.1;
     const difficulty = distance * 0.5 + quality * 0.2 + (direction === "중앙" ? 5 : 8);
     const jumpBonus = defender.positionStats.jump >= 90 ? 12 : defender.positionStats.jump >= 80 ? 8 : 0;
-    const base = rangedBase(rng, 55, 63);
+    const base = rangedBase(rng, 49, 57);
     return { rate: clamp(base + score - difficulty + jumpBonus, 5, 98), base, score, difficulty };
   }
   if (kind === "땅볼") {
     const score = defender.positionStats.range * 0.35 + defender.fieldingStats.awareness * 0.3 + defender.fieldingStats.control * 0.25 + defender.fieldingStats.velocity * 0.1;
     const difficulty = quality * 0.35 + batter.battingStats.speed * 0.25 + distance * 0.2;
-    const base = rangedBase(rng, 53, 60);
+    const base = rangedBase(rng, 47, 54);
     return { rate: clamp(base + score - difficulty, 5, 95), base, score, difficulty };
   }
   if (distance < 20) {
@@ -673,12 +673,12 @@ function fieldingRate(rng: () => number, kind: string, defender: Player, batter:
       ? defender.fieldingStats.awareness * 0.45 + defender.fieldingStats.control * 0.3 + defender.fieldingStats.velocity * 0.25
       : pitcher.fieldingStats.awareness * 0.45 + pitcher.fieldingStats.control * 0.35 + pitcher.fieldingStats.velocity * 0.2;
     const difficulty = distance * 0.5 + batter.battingStats.speed * 0.25 + quality * 0.2;
-    const base = rangedBase(rng, 59, 64);
+    const base = rangedBase(rng, 53, 58);
     return { rate: clamp(base + score - difficulty, 5, 95), base, score, difficulty };
   }
   const score = defender.fieldingStats.awareness * 0.45 + Math.max(defender.positionStats.range, defender.positionStats.jump) * 0.25 + defender.fieldingStats.velocity * 0.15 + defender.fieldingStats.control * 0.15;
   const difficulty = quality * 0.7;
-  const base = rangedBase(rng, 53, 63);
+  const base = rangedBase(rng, 47, 57);
   return { rate: clamp(base + score - difficulty, 5, 95), base, score, difficulty };
 }
 
