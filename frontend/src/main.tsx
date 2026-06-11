@@ -6,7 +6,7 @@ import { fetchInitialData, fetchRecruitCandidates, fetchSnapshot, loginAccount, 
 import { BAT_STRATEGY_TABLE, DEFAULT_BATTING_STRATEGIES, PARTY_OPTIONS, PITCH_TABLE } from "./game/config";
 import { createMatch, simulateStep, validateEntry } from "./game/matchEngine";
 import { dayName, gameLabel, hasDayMiniGame, isGameDay, isWeekend, nextScheduleText, weekNumber } from "./game/schedule";
-import { clamp, createRng, effectiveStat, financialStability, money, playerOvr, settleDues, teamMorale, tradeValue } from "./game/utils";
+import { clamp, createRng, effectiveStat, financialStability, hasPosition, money, playerOvr, settleDues, teamMorale, tradeValue } from "./game/utils";
 
 const DEFAULT_RULE = { entryFee: 3000000, championReward: 20000000, runnerUpReward: 10000000, thirdReward: 5000000, weeksInDemo: 2, maxGamesInDemo: 8 };
 const KIM_NAME = "김철민";
@@ -684,6 +684,13 @@ function FancyPlayerCard({ player, compact = false }: { player: Player; compact?
   const ovr = Math.round(playerOvr(player));
   const starCount = cardStars(ovr);
   const tier = cardTier(starCount, player.age);
+  const isPitcher = hasPosition(player, "투수");
+  const skillLabel = isPitcher ? "구종" : "타격전략";
+  const skillItems = isPitcher
+    ? player.pitches
+    : (player.battingStrategies?.length ? player.battingStrategies : [...DEFAULT_BATTING_STRATEGIES]).map((id) => BAT_STRATEGY_TABLE[id]?.label ?? id);
+  const visibleSkillItems = skillItems.slice(0, compact ? 2 : 4);
+  const hiddenSkillCount = Math.max(0, skillItems.length - visibleSkillItems.length);
   const statRows = [
     ["컨택", player.battingStats.contact],
     ["장타", player.battingStats.power],
@@ -711,8 +718,14 @@ function FancyPlayerCard({ player, compact = false }: { player: Player; compact?
       <div className="cardMeta">
         <span>{player.battingRole}</span>
         {player.traits.slice(0, compact ? 1 : 2).map((trait) => <span key={trait}>{trait}</span>)}
-        {(player.battingStrategies ?? []).slice(0, compact ? 1 : 4).map((id) => BAT_STRATEGY_TABLE[id] ? <span key={id}>{BAT_STRATEGY_TABLE[id].label}</span> : null)}
         {player.consideringLeave && <span className="danger">이탈 고민</span>}
+      </div>
+      <div className={`cardSkillList ${isPitcher ? "pitchList" : "batList"}`}>
+        <strong>{skillLabel}</strong>
+        <div>
+          {visibleSkillItems.length ? visibleSkillItems.map((item) => <span key={item}>{item}</span>) : <span>미보유</span>}
+          {hiddenSkillCount > 0 && <span>+{hiddenSkillCount}</span>}
+        </div>
       </div>
       <div className="cardVitals">
         <Bar label="체력" value={player.stamina} max={player.maxStamina} />
@@ -975,6 +988,25 @@ function LedgerColumn({ title, empty, events, tone = "paid" }: { title: string; 
   );
 }
 
+type LineupOrderMode = "balanced" | "onbase" | "power";
+
+function battingOrderScore(player: Player, mode: LineupOrderMode) {
+  const bat = player.battingStats;
+  if (mode === "onbase") return bat.discipline * 0.42 + bat.contact * 0.34 + bat.speed * 0.14 + bat.power * 0.1;
+  if (mode === "power") return bat.power * 0.45 + bat.contact * 0.22 + bat.discipline * 0.18 + bat.speed * 0.08 + playerOvr(player) * 0.07;
+  return bat.contact * 0.28 + bat.discipline * 0.22 + bat.power * 0.28 + bat.speed * 0.16 + playerOvr(player) * 0.06;
+}
+
+function sortLineupIds(ids: number[], players: Player[], mode: LineupOrderMode) {
+  const playerMap = new Map(players.map((player) => [player.id, player]));
+  return [...ids].sort((a, b) => {
+    const pa = playerMap.get(a);
+    const pb = playerMap.get(b);
+    if (!pa || !pb) return 0;
+    return battingOrderScore(pb, mode) - battingOrderScore(pa, mode);
+  });
+}
+
 function LineupManager({ state, setState }: { state: AppState; setState: (fn: (s: AppState) => AppState) => void }) {
   const team = state.teams.find((item) => item.isPlayer)!;
   const roster = state.players.filter((player) => player.teamId === team.id);
@@ -982,10 +1014,24 @@ function LineupManager({ state, setState }: { state: AppState; setState: (fn: (s
   const availableRoster = roster.filter((player) => !absenceIds.has(player.id));
   const selectedPlayers = state.selectedEntry.map((id) => availableRoster.find((player) => player.id === id)).filter(Boolean) as Player[];
   const defenseSlots = buildDefenseSlots(selectedPlayers, state.selectedPitcherId);
-  const toggle = (id: number) => setState((current) => {
+  const selectedIdSet = new Set(state.selectedEntry);
+  const benchPlayers = roster.filter((player) => !selectedIdSet.has(player.id));
+  const addBatter = (id: number) => setState((current) => {
     if (activeAbsenceIds(current).has(id)) return current;
-    const selected = current.selectedEntry.includes(id) ? current.selectedEntry.filter((item) => item !== id) : [...current.selectedEntry, id].slice(0, 9);
-    return { ...current, selectedEntry: selected };
+    if (current.selectedEntry.includes(id) || current.selectedEntry.length >= 9) return current;
+    return { ...current, selectedEntry: [...current.selectedEntry, id] };
+  });
+  const removeBatter = (id: number) => setState((current) => {
+    const selectedEntry = current.selectedEntry.filter((item) => item !== id);
+    const selectedPitcherId = current.selectedPitcherId === id ? undefined : current.selectedPitcherId;
+    return { ...current, selectedEntry, selectedPitcherId };
+  });
+  const moveBatterTo = (index: number, target: number) => setState((current) => {
+    const next = [...current.selectedEntry];
+    if (index < 0 || index >= next.length || target < 0 || target >= next.length || index === target) return current;
+    const [item] = next.splice(index, 1);
+    next.splice(target, 0, item);
+    return { ...current, selectedEntry: next };
   });
   const moveBatter = (index: number, delta: number) => setState((current) => {
     const next = [...current.selectedEntry];
@@ -993,6 +1039,19 @@ function LineupManager({ state, setState }: { state: AppState; setState: (fn: (s
     if (target < 0 || target >= next.length) return current;
     [next[index], next[target]] = [next[target], next[index]];
     return { ...current, selectedEntry: next };
+  });
+  const applySuggestedOrder = (mode: LineupOrderMode) => setState((current) => ({
+    ...current,
+    selectedEntry: sortLineupIds(current.selectedEntry, current.players, mode)
+  }));
+  const autoFillLineup = () => setState((current) => {
+    const currentTeam = current.teams.find((item) => item.isPlayer);
+    const currentAbsences = activeAbsenceIds(current);
+    const available = current.players.filter((player) => player.teamId === currentTeam?.id && !currentAbsences.has(player.id) && !player.injured);
+    const pitcher = current.selectedPitcherId ? available.find((player) => player.id === current.selectedPitcherId) : undefined;
+    const best = [...available].sort((a, b) => playerOvr(b) - playerOvr(a)).slice(0, 9).map((player) => player.id);
+    const withPitcher = pitcher && !best.includes(pitcher.id) ? [pitcher.id, ...best.filter((id) => id !== pitcher.id)].slice(0, 9) : best;
+    return { ...current, selectedEntry: sortLineupIds(withPitcher, current.players, "balanced") };
   });
   return (
     <Panel title="다음 경기 선발 라인업">
@@ -1015,38 +1074,67 @@ function LineupManager({ state, setState }: { state: AppState; setState: (fn: (s
           {availableRoster.filter((player) => player.pitches.length > 0).map((player) => <option key={player.id} value={player.id}>{player.name} · 체력 {player.stamina}/{player.maxStamina}</option>)}
         </select>
       </label>
-      <div className="battingOrder">
-        <h3>타선 관리</h3>
-        {state.selectedEntry.map((id, index) => {
-          const player = roster.find((item) => item.id === id);
-          return (
-            <div key={id} className="battingRow">
-              <strong>{index + 1}번</strong>
-              {player && !absenceIds.has(player.id) ? (
-                <span className="lineupHoverName">
-                  {player.name}
-                  <FieldTooltipCard player={player} role={`${index + 1}번 타자`} mode="batter" />
-                </span>
-              ) : <span>미지정</span>}
-              <small>{player?.primaryPosition ?? "-"}</small>
-              <button onClick={() => moveBatter(index, -1)} disabled={index === 0}>▲</button>
-              <button onClick={() => moveBatter(index, 1)} disabled={index === state.selectedEntry.length - 1}>▼</button>
+      <div className="lineupWorkbench">
+        <section className="battingOrder">
+          <div className="battingOrderHead">
+            <div>
+              <h3>타선 관리</h3>
+              <p>{state.selectedEntry.length}/9명 · 위에서부터 1번 타자</p>
             </div>
-          );
-        })}
+            <div className="lineupTools">
+              <button type="button" onClick={() => applySuggestedOrder("balanced")}>추천 정렬</button>
+              <button type="button" onClick={() => applySuggestedOrder("onbase")}>출루형</button>
+              <button type="button" onClick={() => applySuggestedOrder("power")}>장타형</button>
+              <button type="button" onClick={autoFillLineup}>상위 9명</button>
+            </div>
+          </div>
+          <div className="battingRows">
+            {state.selectedEntry.length ? state.selectedEntry.map((id, index) => {
+              const player = roster.find((item) => item.id === id);
+              return (
+                <div key={id} className="battingRow">
+                  <strong>{index + 1}</strong>
+                  {player && !absenceIds.has(player.id) ? (
+                    <span className="lineupHoverName">
+                      <b>#{player.number} {player.name}</b>
+                      <small>{player.primaryPosition} · CON {player.battingStats.contact} · POW {player.battingStats.power} · SPD {player.battingStats.speed}</small>
+                      <FieldTooltipCard player={player} role={`${index + 1}번 타자`} mode="batter" />
+                    </span>
+                  ) : <span className="missingLineupPlayer">미지정</span>}
+                  <div className="battingRowActions">
+                    <button type="button" onClick={() => moveBatterTo(index, 0)} disabled={index === 0}>TOP</button>
+                    <button type="button" onClick={() => moveBatter(index, -1)} disabled={index === 0}>▲</button>
+                    <button type="button" onClick={() => moveBatter(index, 1)} disabled={index === state.selectedEntry.length - 1}>▼</button>
+                    <button type="button" onClick={() => moveBatterTo(index, state.selectedEntry.length - 1)} disabled={index === state.selectedEntry.length - 1}>BOT</button>
+                    <button type="button" className="dangerMini" onClick={() => removeBatter(id)}>제외</button>
+                  </div>
+                </div>
+              );
+            }) : <p className="emptyLineup">더그아웃 후보에서 선발 9명을 추가하세요.</p>}
+          </div>
+        </section>
+        <section className="dugoutPool">
+          <div className="battingOrderHead">
+            <div>
+              <h3>더그아웃 후보</h3>
+              <p>마우스오버로 카드 확인 · 클릭으로 선발 추가</p>
+            </div>
+          </div>
+          <div className="entryList compactList dugoutEntryList">{benchPlayers.map((player) => {
+            const absent = absenceIds.has(player.id);
+            return (
+              <button key={player.id} disabled={absent || state.selectedEntry.length >= 9} className={absent ? "unavailable" : ""} onClick={() => addBatter(player.id)}>
+                <span className="lineupHoverName">
+                  <b>#{player.number} {player.name}</b>
+                  <small>{player.primaryPosition}{absent ? " · 결석" : ` · OVR ${Math.round(playerOvr(player))}`}</small>
+                  <FieldTooltipCard player={player} role="더그아웃" mode={player.pitches.length > 0 ? "pitcher" : "fielder"} />
+                </span>
+                <strong>{absent ? "불가" : "추가"}</strong>
+              </button>
+            );
+          })}</div>
+        </section>
       </div>
-      <div className="entryList compactList dugoutEntryList">{roster.map((player) => {
-        const absent = absenceIds.has(player.id);
-        return (
-          <button key={player.id} disabled={absent} className={state.selectedEntry.includes(player.id) && !absent ? "selected" : ""} onClick={() => toggle(player.id)}>
-            <span className="lineupHoverName">
-              #{player.number} {player.name} · {player.primaryPosition}{absent ? " · 결석" : ""}
-              <FieldTooltipCard player={player} role={state.selectedEntry.includes(player.id) ? "선발 후보" : "더그아웃"} mode={player.pitches.length > 0 ? "pitcher" : "fielder"} />
-            </span>
-            <strong>{absent ? "사용불가" : `${player.stamina}/${player.maxStamina}`}</strong>
-          </button>
-        );
-      })}</div>
     </Panel>
   );
 }
@@ -1639,13 +1727,15 @@ function FieldPlayerMarker({ className, label, player, role, mode, effect }: { c
 }
 
 function FieldTooltipCard({ player, role, mode, effect }: { player: Player; role: string; mode: "batter" | "pitcher" | "fielder"; effect?: { type: "투지" | "태업"; until: number } }) {
+  const [statView, setStatView] = useState<"batting" | "defense">("defense");
   const statMode = mode === "pitcher" ? "pitcher" : "batter";
-  const rows = mode === "fielder" ? [
+  const defenseRows = [
     ["제구", player.fieldingStats.control],
     ["구속", player.fieldingStats.velocity],
     ["주의", player.fieldingStats.awareness],
     ["범위", player.positionStats.range || player.positionStats.jump || player.positionStats.lead]
-  ].map(([label, base]) => ({ label: String(label), base: Number(base), current: effectiveStat(player, Number(base), effect) })) : liveStatRows(player, statMode, effect);
+  ].map(([label, base]) => ({ label: String(label), base: Number(base), current: effectiveStat(player, Number(base), effect) }));
+  const rows = mode === "fielder" && statView === "defense" ? defenseRows : liveStatRows(player, statMode, effect);
   return (
     <div className={`fieldTooltip ${mode}`}>
       <header>
@@ -1653,6 +1743,10 @@ function FieldTooltipCard({ player, role, mode, effect }: { player: Player; role
         <strong>#{player.number} {player.name}</strong>
         <em>{player.primaryPosition} · OVR {playerOvr(player).toFixed(1)}</em>
       </header>
+      {mode === "fielder" && <div className="tooltipToggle" role="group" aria-label="스탯 보기 전환">
+        <button type="button" className={statView === "defense" ? "active" : ""} onClick={() => setStatView("defense")}>수비</button>
+        <button type="button" className={statView === "batting" ? "active" : ""} onClick={() => setStatView("batting")}>공격</button>
+      </div>}
       <div className="tooltipVitals">
         <Bar label="체력" value={player.stamina} max={player.maxStamina} />
         <Bar label="컨디션" value={player.condition} max={100} />
