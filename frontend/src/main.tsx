@@ -207,7 +207,7 @@ function App() {
 
   if (!account) return <IndexScreen onEnter={enterAccount} />;
   if (state.phase === "loading") return <Shell state={state} userName={account?.username}><Panel title="로딩">DB 데이터를 불러오는 중입니다.</Panel></Shell>;
-  if (!playerTeam || !kim) return <Shell state={state} userName={account?.username}><GameOver reason="플레이어 팀 또는 김철민 데이터를 찾을 수 없습니다." onRestart={restart} /></Shell>;
+  if (!playerTeam || !kim) return <Shell state={state} userName={account?.username}><GameOver reason="플레이어 팀 또는 김철민 데이터를 찾을 수 없습니다." onRestart={logout} /></Shell>;
   const showWednesdayOps = state.phase === "dashboard" && state.dayIndex % 7 === 2 && (state.financeEvents?.length ?? 0) > 0;
   const mainActions = (
     <>
