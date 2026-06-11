@@ -17,6 +17,15 @@ const DATA_OWNERSHIP_VERSION = 3;
 const KIM_ROLES: KimRole[] = ["지명타자", "야수", "루수", "포수", "선발투수", "구원투수", "마무리투수", "투타 겸업", "벤치", "결장"];
 type BattingStrategyChoice = (typeof BAT_STRATEGY_TABLE)[string];
 
+function localHash(text: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
 function loadSavedAccount(): DemoAccount | null {
   try {
     const raw = localStorage.getItem(ACCOUNT_KEY);
@@ -610,8 +619,11 @@ function Evening({ state, setState, finishDay }: { state: AppState; setState: (f
   const train = (key: string) => {
     setState((current) => {
       if (current.eveningHours < 2) return current;
-      const rng = createRng(current.seed + current.activityLog.length);
-      const success = rng() < 0.5;
+      const seed = current.seed + current.dayIndex * 997 + (current.nightTrainingCount ?? 0) * 313 + current.activityLog.length * 37 + localHash(key);
+      const rng = createRng(seed);
+      const roll = rng();
+      const success = roll < 0.4;
+      const rollText = `${(roll * 100).toFixed(1)}/40.0`;
       const players = current.players.map((player) => {
         if (player.id !== kim.id) return player;
         const next = structuredClone(player) as Player;
@@ -623,7 +635,7 @@ function Evening({ state, setState, finishDay }: { state: AppState; setState: (f
         next.stamina = clamp(next.stamina - 4, 0, next.maxStamina);
         return next;
       });
-      return { ...current, players, eveningHours: current.eveningHours - 2, seed: current.seed + 11, nightAction: "training", nightTrainingCount: (current.nightTrainingCount ?? 0) + 1, nightConditionSettled: false, activityLog: [`개인 훈련: ${key} ${success ? "+1 성공" : "변화 없음"} / 김철민 체력 -4`, ...current.activityLog] };
+      return { ...current, players, eveningHours: current.eveningHours - 2, seed: current.seed + 11, nightAction: "training", nightTrainingCount: (current.nightTrainingCount ?? 0) + 1, nightConditionSettled: false, activityLog: [`개인 훈련: ${key} ${success ? "+1 성공" : "변화 없음"} / 성공률 40% / 판정 ${rollText} / 김철민 체력 -4`, ...current.activityLog] };
     });
   };
   const rest = () => setState((current) => ({ ...current, players: current.players.map((player) => player.id === kim.id ? { ...player, stamina: clamp(player.stamina + 18, 0, player.maxStamina) } : player), restBonus: 0, nightAction: "rest", nightConditionSettled: false, activityLog: ["휴식 선택: 야간 컨디션 정산에서 휴식 기준 적용, 김철민 체력 +18", ...current.activityLog], eveningHours: 0 }));
@@ -647,7 +659,7 @@ function Evening({ state, setState, finishDay }: { state: AppState; setState: (f
       <Panel title="퇴근 후 6시간">
         <Metric label="남은 시간" value={`${state.eveningHours}시간`} />
         <div className="buttonGrid">
-          {stats.map(([label, key]) => <button key={key} disabled={state.eveningHours < 2} onClick={() => train(key)}>{label} 훈련<small>2시간 · 김철민 체력 -4 · 성공률 50%</small></button>)}
+          {stats.map(([label, key]) => <button key={key} disabled={state.eveningHours < 2} onClick={() => train(key)}>{label} 훈련<small>2시간 · 김철민 체력 -4 · 성공률 40%</small></button>)}
         </div>
         <button onClick={rest} disabled={state.eveningHours <= 0}>휴식으로 저녁 종료</button>
         {isWeekend(state.dayIndex) && <div className="partyRow">{PARTY_OPTIONS.map((option) => <button key={option.label} disabled={(state.teams.find((team) => team.isPlayer)?.funds ?? 0) < option.cost} onClick={() => party(option)}>{option.label}<small>{money(option.cost)}</small></button>)}</div>}
@@ -802,6 +814,7 @@ function TeamManagement({ account, state, setState, finishDay }: { account: Demo
   const [recruitError, setRecruitError] = useState("");
   const [applications, setApplications] = useState<Player[]>([]);
   const [selectedApplication, setSelectedApplication] = useState<Player | null>(null);
+  const [recruitOpen, setRecruitOpen] = useState(false);
   useEffect(() => {
     if (state.dayIndex % 7 !== 2) return;
     setRecruitLoading(true);
@@ -893,58 +906,67 @@ function TeamManagement({ account, state, setState, finishDay }: { account: Demo
           <button disabled onClick={collect}>회비/찬조 자동 정산 완료</button>
           <button disabled={state.eveningHours < 3} onClick={() => training("일반")}>일반 팀 훈련<small>3시간</small></button>
           <button disabled={state.eveningHours < 3} onClick={() => training("조직력")}>조직력 훈련<small>3시간</small></button>
-          <button onClick={() => setState((s) => ({ ...s, activityLog: ["모집원서 확인: 중앙 선수 데이터의 영입 후보를 표시합니다.", ...s.activityLog] }))}>모집원서 확인</button>
+          <button onClick={() => setRecruitOpen(true)}>선수모집<small>홍보비 {money(RECRUIT_PROMOTION_COST)}</small></button>
         </div>
         <button className="primary" onClick={finishDay}>팀 관리 종료</button>
       </Panel>
       <FinanceLedger events={state.financeEvents} />
       <LineupManager state={state} setState={setState} />
-      <Panel title="선수모집">
-        {recruitError && <p className="danger">{recruitError}</p>}
-        <div className="recruitBoard">
-          <div className="recruitBrief">
-            <Metric label="홍보비" value={money(RECRUIT_PROMOTION_COST)} />
-            <Metric label="후보 풀" value={recruitLoading ? "확인 중" : `${recruitCandidates.length}명`} />
-            <Metric label="도착 서류" value={`${applications.length}장`} />
-          </div>
-          <button className="primary recruitStart" disabled={recruitLoading || team.funds < RECRUIT_PROMOTION_COST || recruitCandidates.length === 0} onClick={startRecruitment}>
-            선수모집 홍보 집행
-            <small>1성 40 · 2성 30 · 3성 20 · 4성 4 · 5성 1 가중치</small>
-          </button>
-          {recruitLoading && <p className="next">중앙 선수 데이터를 확인하는 중입니다.</p>}
-          {!recruitLoading && recruitCandidates.length === 0 && <p className="next">현재 영입 가능한 선수가 없습니다.</p>}
-          <div className="applicationDeck">
-            {applications.length === 0 && <p className="paperEmpty">홍보를 집행하면 입단희망서 5장이 순서대로 공개됩니다.</p>}
-            {applications.map((player, index) => {
-              const stars = starsForPlayer(player);
-              return (
-                <button
-                  key={String(player.meta?.masterCode ?? player.id)}
-                  className={`applicationPaper stars-${stars}`}
-                  style={{ animationDelay: `${index * 180}ms` }}
-                  onClick={() => setSelectedApplication(player)}
-                >
-                  <span className="paperNo">NO.{String(index + 1).padStart(2, "0")}</span>
-                  <strong>{player.name}</strong>
-                  <span>{player.primaryPosition} · OVR {Math.round(playerOvr(player))}</span>
-                  <small>{"★".repeat(stars)}{"☆".repeat(5 - stars)}</small>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        {selectedApplication && (
-          <div className="modalBackdrop" onClick={() => setSelectedApplication(null)}>
-            <div className="recruitModal" onClick={(event) => event.stopPropagation()}>
-              <div className="modalCardWrap"><FancyPlayerCard player={selectedApplication} /></div>
-              <div className="modalActions">
-                <button className="primary" onClick={() => recruit(selectedApplication)}>입단시킨다</button>
-                <button onClick={() => setSelectedApplication(null)}>보류한다</button>
+      {recruitOpen && (
+        <div className="modalBackdrop" onClick={() => { setRecruitOpen(false); setSelectedApplication(null); }}>
+          <div className="recruitModal recruitBoardModal" onClick={(event) => event.stopPropagation()}>
+            <header className="modalHeader">
+              <div>
+                <span>수요일 운영</span>
+                <h3>선수모집</h3>
+              </div>
+              <button onClick={() => { setRecruitOpen(false); setSelectedApplication(null); }}>닫기</button>
+            </header>
+            {recruitError && <p className="danger">{recruitError}</p>}
+            <div className="recruitBoard">
+              <div className="recruitBrief">
+                <Metric label="홍보비" value={money(RECRUIT_PROMOTION_COST)} />
+                <Metric label="후보 풀" value={recruitLoading ? "확인 중" : `${recruitCandidates.length}명`} />
+                <Metric label="도착 서류" value={`${applications.length}장`} />
+              </div>
+              <button className="primary recruitStart" disabled={recruitLoading || team.funds < RECRUIT_PROMOTION_COST || recruitCandidates.length === 0} onClick={startRecruitment}>
+                선수모집 홍보 집행
+                <small>1성 40 · 2성 30 · 3성 20 · 4성 4 · 5성 1 가중치</small>
+              </button>
+              {recruitLoading && <p className="next">중앙 선수 데이터를 확인하는 중입니다.</p>}
+              {!recruitLoading && recruitCandidates.length === 0 && <p className="next">현재 영입 가능한 선수가 없습니다.</p>}
+              <div className="applicationDeck">
+                {applications.length === 0 && <p className="paperEmpty">홍보를 집행하면 입단희망서 5장이 순서대로 공개됩니다.</p>}
+                {applications.map((player, index) => {
+                  const stars = starsForPlayer(player);
+                  return (
+                    <button
+                      key={String(player.meta?.masterCode ?? player.id)}
+                      className={`applicationPaper stars-${stars}`}
+                      style={{ animationDelay: `${index * 180}ms` }}
+                      onClick={() => setSelectedApplication(player)}
+                    >
+                      <span className="paperNo">NO.{String(index + 1).padStart(2, "0")}</span>
+                      <strong>{player.name}</strong>
+                      <span>{player.primaryPosition} · OVR {Math.round(playerOvr(player))}</span>
+                      <small>{"★".repeat(stars)}{"☆".repeat(5 - stars)}</small>
+                    </button>
+                  );
+                })}
               </div>
             </div>
+            {selectedApplication && (
+              <div className="recruitApplicationDetail">
+                <div className="modalCardWrap"><FancyPlayerCard player={selectedApplication} /></div>
+                <div className="modalActions">
+                  <button className="primary" onClick={() => recruit(selectedApplication)}>입단시킨다</button>
+                  <button onClick={() => setSelectedApplication(null)}>보류한다</button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </Panel>
+        </div>
+      )}
     </div>
   );
 }

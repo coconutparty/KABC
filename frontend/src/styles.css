@@ -3222,6 +3222,50 @@ dd {
   animation: modalPop 260ms cubic-bezier(.18,.89,.32,1.18) both;
 }
 
+.recruitBoardModal {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  width: min(980px, 96vw);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  color: #fff7df;
+}
+
+.modalHeader span {
+  color: #9fe9ff;
+  font-size: 12px;
+  font-weight: 1000;
+}
+
+.modalHeader h3 {
+  margin: 2px 0 0;
+  font-size: 22px;
+}
+
+.modalHeader button {
+  min-width: 78px;
+  min-height: 36px;
+  border-color: rgba(255,255,255,0.32);
+  color: #fff7df;
+  background: rgba(255,255,255,0.12);
+}
+
+.recruitApplicationDetail {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(180px, 240px);
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 10px;
+  background: rgba(0,0,0,0.2);
+  border: 1px solid rgba(245, 215, 125, 0.28);
+}
+
 .modalCardWrap {
   display: grid;
   justify-items: center;
@@ -3732,6 +3776,10 @@ summary {
 
   .lineupTools button {
     flex: 1 1 92px;
+  }
+
+  .recruitApplicationDetail {
+    grid-template-columns: 1fr;
   }
 
   .battingRow {
